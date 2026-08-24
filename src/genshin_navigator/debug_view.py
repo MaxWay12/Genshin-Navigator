@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from math import cos, radians, sin
+from pathlib import Path
+
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
+from .navigation import NavigationController, NavigationSnapshot
 from .poi import PoiCatalog, PoiProgress, PointOfInterest
 from .tracker import TrackerSnapshot, TrackerState
 
@@ -16,6 +21,7 @@ class DebugMapView:
         poi_kinds: set[str] | None = None,
         poi_target_kinds: set[str] | None = None,
         poi_progress: PoiProgress | None = None,
+        navigation: NavigationController | None = None,
         max_width: int = 1100,
         max_height: int = 720,
     ):
@@ -30,7 +36,14 @@ class DebugMapView:
         self._poi_kinds = poi_kinds
         self._poi_target_kinds = poi_target_kinds
         self._poi_progress = poi_progress
+        self._navigation = navigation
         self._active_layer_id = ""
+        font_path = Path("C:/Windows/Fonts/arial.ttf")
+        self._unicode_font = (
+            ImageFont.truetype(str(font_path), 15)
+            if font_path.exists()
+            else ImageFont.load_default()
+        )
         self.base = np.empty((0, 0, 3), dtype=np.uint8)
         self.scale = 1.0
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
@@ -60,7 +73,7 @@ class DebugMapView:
         )
         self.base = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
         self._active_layer_id = selected
-        cv2.resizeWindow(self.window_name, size[0], size[1] + 76)
+        cv2.resizeWindow(self.window_name, size[0], size[1] + 112)
 
     @staticmethod
     def _poi_color(poi: PointOfInterest) -> tuple[int, int, int]:
@@ -85,7 +98,7 @@ class DebugMapView:
     ) -> bool:
         layer_id = snapshot.position.layer_id if snapshot.position is not None else snapshot.map_layer_id
         self._select_layer(layer_id)
-        canvas = cv2.copyMakeBorder(self.base, 0, 76, 0, 0, cv2.BORDER_CONSTANT, value=(18, 18, 18))
+        canvas = cv2.copyMakeBorder(self.base, 0, 112, 0, 0, cv2.BORDER_CONSTANT, value=(18, 18, 18))
         colors = {
             TrackerState.TRACKING: (80, 220, 80),
             TrackerState.ACQUIRING: (40, 210, 240),
@@ -94,7 +107,7 @@ class DebugMapView:
         }
         color = (150, 150, 150) if paused_reason else colors[snapshot.state]
         display_position = self._display_position(snapshot.x_px, snapshot.y_px)
-        nearest: tuple[PointOfInterest, float] | None = None
+        navigation = self._navigation.update(snapshot) if self._navigation else None
         layer_poi_count = 0
         if self._poi_catalog is not None and snapshot.position is not None:
             layer_pois = [
@@ -107,21 +120,12 @@ class DebugMapView:
             for poi in layer_pois:
                 poi_point = (round(poi.x * self.scale), round(poi.y * self.scale))
                 cv2.circle(canvas, poi_point, 2, self._poi_color(poi), thickness=-1)
-            ranked = self._poi_catalog.nearest(
-                snapshot.position,
-                kinds=self._poi_target_kinds,
-                exclude_ids=(
-                    self._poi_progress.collected_ids
-                    if self._poi_progress is not None
-                    else None
-                ),
-                limit=1,
-            )
-            if ranked:
-                nearest = ranked[0]
-                poi, _ = nearest
-                poi_point = (round(poi.x * self.scale), round(poi.y * self.scale))
-                cv2.circle(canvas, poi_point, 7, (255, 255, 255), thickness=2)
+        target_point: tuple[int, int] | None = None
+        if navigation is not None and navigation.target is not None:
+            poi = navigation.target
+            target_point = (round(poi.x * self.scale), round(poi.y * self.scale))
+            target_color = (150, 150, 150) if not navigation.available else (255, 255, 255)
+            cv2.circle(canvas, target_point, 9, target_color, thickness=2)
         if display_position is not None:
             point = (
                 round(display_position[0] * self.scale),
@@ -129,6 +133,13 @@ class DebugMapView:
             )
             cv2.circle(canvas, point, 9, (10, 10, 10), thickness=3)
             cv2.circle(canvas, point, 7, color, thickness=-1)
+            if target_point is not None:
+                line_color = (
+                    (150, 150, 150)
+                    if navigation is None or not navigation.available
+                    else (255, 235, 180)
+                )
+                cv2.line(canvas, point, target_point, line_color, 2, cv2.LINE_AA)
         state_label = "PAUSED" if paused_reason else snapshot.state.value
         shown_position = (
             f"({display_position[0]:.2f}, {display_position[1]:.2f})"
@@ -144,24 +155,84 @@ class DebugMapView:
             f"layer={snapshot.map_layer_id or '-'}  "
             f"reference={snapshot.reference_id or '-'}  {detail_reason}"
         )
-        nearest_text = (
-            f"target={nearest[0].kind}:{nearest[0].label_id}  distance={nearest[1]:.1f}px  visible_pois={layer_poi_count}  M=collected"
-            if nearest is not None
-            else f"nearest=-  layer_pois={layer_poi_count}"
-        )
+        target_text, controls = self._navigation_text(navigation, layer_poi_count)
         y = self.base.shape[0]
         cv2.putText(canvas, status, (12, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
         cv2.putText(canvas, detail, (12, y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (210, 210, 210), 1, cv2.LINE_AA)
-        cv2.putText(canvas, nearest_text, (12, y + 66), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (210, 210, 210), 1, cv2.LINE_AA)
+        nav_color = (210, 210, 210) if navigation is None or navigation.available else (135, 135, 135)
+        self._put_unicode_text(canvas, target_text, (12, y + 52), nav_color)
+        cv2.putText(canvas, controls, (12, y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (190, 190, 190), 1, cv2.LINE_AA)
+        if navigation is not None and navigation.bearing_degrees is not None:
+            self._draw_direction_arrow(canvas, navigation, y)
         cv2.imshow(self.window_name, canvas)
         key = cv2.waitKey(1) & 0xFF
-        if key in (ord("m"), ord("M")) and nearest is not None and self._poi_progress is not None:
-            self._poi_progress.mark_collected(nearest[0].id)
+        if self._navigation is not None:
+            if key in (ord("n"), ord("N")):
+                self._navigation.next_target()
+            elif key in (ord("p"), ord("P")):
+                self._navigation.previous_target()
+            elif key in (ord("s"), ord("S")):
+                self._navigation.skip()
+            elif key in (ord("m"), ord("M")):
+                self._navigation.mark_collected()
+            elif key in (ord("u"), ord("U")):
+                self._navigation.undo()
         try:
             visible = cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) >= 1
         except cv2.error:
             visible = False
         return visible and key not in (27, ord("q"), ord("Q"))
+
+    @staticmethod
+    def _navigation_text(
+        navigation: NavigationSnapshot | None, layer_poi_count: int
+    ) -> tuple[str, str]:
+        controls = "N/P next/previous   S skip session   M collected   U undo   Q quit"
+        if navigation is None or navigation.target is None:
+            return f"target=-  visible_pois={layer_poi_count}", controls
+        target = navigation.target
+        if not navigation.available:
+            distance = "frozen"
+        elif navigation.distance_m is None:
+            distance = "uncalibrated"
+        else:
+            distance = f"≈{navigation.distance_m:.0f} м (straight)"
+        return (
+            f"target={target.name} [{target.kind}]  distance={distance}  "
+            f"layer={target.layer_id}",
+            controls,
+        )
+
+    def _put_unicode_text(
+        self,
+        canvas: np.ndarray,
+        text: str,
+        point: tuple[int, int],
+        color: tuple[int, int, int],
+    ) -> None:
+        rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+        image = Image.fromarray(rgb)
+        draw = ImageDraw.Draw(image)
+        draw.text(point, text, font=self._unicode_font, fill=(color[2], color[1], color[0]))
+        np.copyto(canvas, cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR))
+
+    @staticmethod
+    def _draw_direction_arrow(
+        canvas: np.ndarray, navigation: NavigationSnapshot, panel_y: int
+    ) -> None:
+        assert navigation.bearing_degrees is not None
+        center = (canvas.shape[1] - 34, panel_y + 56)
+        angle = radians(navigation.bearing_degrees)
+        tip = (
+            round(center[0] + 25 * sin(angle)),
+            round(center[1] - 25 * cos(angle)),
+        )
+        color = (255, 235, 180) if navigation.available else (135, 135, 135)
+        cv2.arrowedLine(canvas, center, tip, color, 3, cv2.LINE_AA, tipLength=0.35)
+        cv2.putText(
+            canvas, "N", (center[0] - 5, panel_y + 17),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1, cv2.LINE_AA,
+        )
 
     def close(self) -> None:
         try:

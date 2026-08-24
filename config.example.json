@@ -56,5 +56,9 @@
     "progress_path": "artifacts/poi_progress.json",
     "kinds": ["chest", "hydroculus", "waypoint"],
     "target_kinds": ["chest"]
+  },
+  "navigation": {
+    "enabled": true,
+    "calibration_path": "datasets/local/calibration/fontaine.json"
   }
 }

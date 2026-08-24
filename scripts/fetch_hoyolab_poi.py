@@ -7,6 +7,7 @@ from pathlib import Path
 from genshin_navigator.hoyolab_poi import (
     DEFAULT_LABEL_KINDS,
     build_catalog,
+    build_space_metrics,
     fetch_labels,
     fetch_points,
     write_catalog,
@@ -35,7 +36,14 @@ def main() -> int:
         area_id=args.area_id,
         label_kinds=DEFAULT_LABEL_KINDS,
     )
-    path = write_catalog(args.output, pois, map_version=args.map_version, stats=stats)
+    spaces = build_space_metrics(surface, underground)
+    path = write_catalog(
+        args.output,
+        pois,
+        map_version=args.map_version,
+        stats=stats,
+        spaces=spaces,
+    )
     print(json.dumps({"output": str(path), "poi_count": len(pois), "stats": stats}, ensure_ascii=False))
     return 0
 

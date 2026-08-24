@@ -125,6 +125,12 @@ class PoiConfig:
 
 
 @dataclass(frozen=True)
+class NavigationConfig:
+    enabled: bool = True
+    calibration_path: Path = Path("datasets/local/calibration/fontaine.json")
+
+
+@dataclass(frozen=True)
 class AppConfig:
     map_path: Path | None
     pyramid_path: Path | None
@@ -137,6 +143,7 @@ class AppConfig:
     failure_recorder: FailureRecorderConfig = field(default_factory=FailureRecorderConfig)
     screen_gate: ScreenGateConfig = field(default_factory=ScreenGateConfig)
     poi: PoiConfig = field(default_factory=PoiConfig)
+    navigation: NavigationConfig = field(default_factory=NavigationConfig)
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -174,6 +181,14 @@ def load_config(path: str | Path) -> AppConfig:
     poi_kinds = tuple(poi_raw.pop("kinds", ("chest", "hydroculus", "waypoint")))
     poi_target_kinds = tuple(poi_raw.pop("target_kinds", ("chest",)))
 
+    navigation_raw = dict(raw.get("navigation", {}))
+    calibration_value = navigation_raw.pop(
+        "calibration_path", "datasets/local/calibration/fontaine.json"
+    )
+    calibration_path = Path(calibration_value)
+    if not calibration_path.is_absolute():
+        calibration_path = (config_path.parent / calibration_path).resolve()
+
     return AppConfig(
         map_path=map_path,
         pyramid_path=pyramid_path,
@@ -195,5 +210,9 @@ def load_config(path: str | Path) -> AppConfig:
             kinds=poi_kinds,
             target_kinds=poi_target_kinds,
             **poi_raw,
+        ),
+        navigation=NavigationConfig(
+            calibration_path=calibration_path,
+            **navigation_raw,
         ),
     )

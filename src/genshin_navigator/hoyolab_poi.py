@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from .poi import PointOfInterest
+from .poi import MapSpaceMetric, PointOfInterest
 from .position import CoordinateSpace
 
 
@@ -138,12 +138,49 @@ def build_catalog(
     return result, stats
 
 
+def build_space_metrics(
+    surface_metadata: dict[str, Any],
+    underground_metadata: dict[str, Any],
+) -> list[MapSpaceMetric]:
+    region_id = str(surface_metadata.get("region_id", "fontaine"))
+    atlas_to_world = np.linalg.inv(
+        np.asarray(surface_metadata["world_to_atlas"], dtype=np.float64)
+    )
+    metrics = [
+        MapSpaceMetric(
+            region_id=region_id,
+            layer_id="surface",
+            coordinate_space=CoordinateSpace.SURFACE_ATLAS,
+            local_to_world=(
+                (float(atlas_to_world[0, 0]), float(atlas_to_world[0, 1])),
+                (float(atlas_to_world[1, 0]), float(atlas_to_world[1, 1])),
+            ),
+        )
+    ]
+    for group in underground_metadata.get("groups", []):
+        for floor in group.get("floors", []):
+            matrix = np.asarray(floor["local_to_world"], dtype=np.float64)
+            metrics.append(
+                MapSpaceMetric(
+                    region_id=region_id,
+                    layer_id=str(floor["layer_id"]),
+                    coordinate_space=CoordinateSpace.LAYER_LOCAL,
+                    local_to_world=(
+                        (float(matrix[0, 0]), float(matrix[0, 1])),
+                        (float(matrix[1, 0]), float(matrix[1, 1])),
+                    ),
+                )
+            )
+    return metrics
+
+
 def write_catalog(
     output: str | Path,
     pois: Iterable[PointOfInterest],
     *,
     map_version: str,
     stats: dict[str, int],
+    spaces: Iterable[MapSpaceMetric] = (),
 ) -> Path:
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,6 +192,7 @@ def write_catalog(
         "map_version": map_version,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "stats": stats,
+        "spaces": [metric.to_dict() for metric in spaces],
         "pois": [poi.to_dict() for poi in items],
     }
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

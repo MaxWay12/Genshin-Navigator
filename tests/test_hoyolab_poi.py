@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from genshin_navigator.hoyolab_poi import build_catalog
+from genshin_navigator.hoyolab_poi import build_catalog, build_space_metrics
 from genshin_navigator.position import CoordinateSpace
 
 
@@ -58,6 +58,11 @@ class HoyolabPoiTests(unittest.TestCase):
         self.assertEqual((by_id["hoyolab:2"].x, by_id["hoyolab:2"].y), (5.0, 7.0))
         self.assertEqual(by_id["hoyolab:2"].layer_id, "floor-a")
         self.assertEqual(stats["skipped_unknown_floor"], 1)
+
+        metrics = build_space_metrics(surface, underground)
+        by_layer = {metric.layer_id: metric for metric in metrics}
+        self.assertEqual(by_layer["surface"].local_to_world, ((0.5, 0.0), (0.0, 1 / 3)))
+        self.assertEqual(by_layer["floor-a"].local_to_world, ((1.0, 0.0), (0.0, 1.0)))
 
 
 if __name__ == "__main__":

@@ -6,12 +6,17 @@ import sys
 import time
 from pathlib import Path
 
+import cv2
+import numpy as np
+
+from .calibration import CalibrationSession, load_calibration
 from .capture import crop_roi, grab_screen, load_image, save_screen
 from .config import AppConfig, load_config
 from .debug_view import DebugMapView
 from .evaluation import evaluate_dataset
 from .failure_recorder import FailureRecorder
 from .matcher import MinimapMatcher
+from .navigation import NavigationController
 from .pyramid import Locator, PyramidMatcher, load_pyramid
 from .poi import PoiCatalog, PoiProgress
 from .position import CoordinateSpace, MapPosition, PositionState
@@ -63,6 +68,16 @@ def _parser() -> argparse.ArgumentParser:
     evaluate_sequence.add_argument("scenario", help="Directory containing scenario.json")
     evaluate_sequence.add_argument("--config", default="config.json")
     evaluate_sequence.add_argument("--report", help="Optional JSON report path")
+
+    calibrate = subparsers.add_parser(
+        "calibrate-distance",
+        help="Interactively calibrate HoYoLAB world units to displayed game meters",
+    )
+    calibrate.add_argument("--config", default="config.json")
+    calibrate.add_argument(
+        "--output", default="datasets/local/calibration/fontaine.json"
+    )
+    calibrate.add_argument("--samples", type=int, default=3)
     return parser
 
 
@@ -103,6 +118,145 @@ def _locate_once(config: AppConfig, matcher: Locator, screenshot: str | None) ->
     return result
 
 
+def _run_calibration(
+    config: AppConfig, matcher: Locator, output: str | Path, required_samples: int
+) -> int:
+    if not config.poi.enabled or config.poi.catalog_path is None:
+        raise ValueError("calibrate-distance requires an enabled POI catalog with metrics")
+    catalog = PoiCatalog.load(config.poi.catalog_path)
+    session = CalibrationSession(catalog, required_samples=required_samples)
+    tracker = LiveTracker(config.tracker)
+    screen_gate = (
+        MinimapScreenGate.from_config(config.screen_gate)
+        if config.screen_gate.enabled
+        else None
+    )
+    output_path = Path(output).resolve()
+    window = "Genshin Navigator - Distance Calibration"
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window, 760, 270)
+    try:
+        cv2.setWindowProperty(window, cv2.WND_PROP_TOPMOST, 1)
+    except cv2.error:
+        pass
+    stage = "start"
+    start_position: MapPosition | None = None
+    last_fresh: MapPosition | None = None
+    last_fresh_seen = 0.0
+    meter_input = ""
+    message = ""
+    try:
+        while True:
+            loop_started = time.perf_counter()
+            minimap = crop_roi(grab_screen(), config.roi)
+            gate = screen_gate.check(minimap) if screen_gate else None
+            if gate is not None and not gate.minimap_present:
+                snapshot = tracker.pause(loop_started, gate.reason or "minimap_not_visible")
+            else:
+                hint = tracker.position_hint
+                result = (
+                    matcher.locate_near(minimap, hint, config.local_search)
+                    if config.local_search.enabled
+                    and hint is not None
+                    and isinstance(matcher, PyramidMatcher)
+                    else matcher.locate(minimap)
+                )
+                snapshot = tracker.update(result, loop_started)
+            if (
+                snapshot.position is not None
+                and snapshot.state is PositionState.TRACKING
+                and not snapshot.stale
+                and snapshot.position.coordinate_space is CoordinateSpace.SURFACE_ATLAS
+            ):
+                last_fresh = snapshot.position
+                last_fresh_seen = loop_started
+
+            panel = np.full((270, 760, 3), (18, 18, 18), dtype=np.uint8)
+            lines = [
+                f"Fontaine distance calibration  sample {len(session.samples) + 1}/{required_samples}",
+                "Use a flat 100-300 m route and the in-game navigation distance.",
+            ]
+            if stage == "start":
+                lines += [
+                    "Stand at the start in Genshin, then Alt-Tab here and press C.",
+                    "The last fresh surface fix is used; no full-screen image is saved.",
+                ]
+            elif stage == "distance":
+                lines += [
+                    "Type the distance shown by the game (100-300), then press Enter.",
+                    f"distance: {meter_input or '_'} m",
+                ]
+            else:
+                lines += [
+                    "Walk to the destination in Genshin, then Alt-Tab here and press C.",
+                    "Esc cancels. The last valid calibration is never overwritten on failure.",
+                ]
+            if message:
+                lines.append(message)
+            age = loop_started - last_fresh_seen if last_fresh is not None else float("inf")
+            lines.append(
+                f"tracker={snapshot.state.value}  fresh surface fix age="
+                + (f"{age:.1f}s" if last_fresh is not None else "none")
+            )
+            for index, line in enumerate(lines):
+                cv2.putText(
+                    panel, line, (18, 32 + index * 31), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55, (220, 220, 220), 1, cv2.LINE_AA,
+                )
+            cv2.imshow(window, panel)
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:
+                session.write_draft(output_path, error="cancelled")
+                return 130
+            if stage == "start" and key in (ord("c"), ord("C")):
+                if last_fresh is None or age > 15.0:
+                    message = "No recent fresh surface position; return to Genshin briefly."
+                else:
+                    start_position = last_fresh
+                    stage = "distance"
+                    message = "Start captured."
+            elif stage == "distance":
+                if ord("0") <= key <= ord("9") and len(meter_input) < 3:
+                    meter_input += chr(key)
+                elif key in (8, 127):
+                    meter_input = meter_input[:-1]
+                elif key in (10, 13):
+                    shown = int(meter_input or "0")
+                    if 100 <= shown <= 300:
+                        stage = "end"
+                        message = f"Distance {shown} m accepted."
+                    else:
+                        message = "Distance must be between 100 and 300 m."
+            elif stage == "end" and key in (ord("c"), ord("C")):
+                if last_fresh is None or age > 15.0:
+                    message = "No recent fresh surface position; return to Genshin briefly."
+                else:
+                    assert start_position is not None
+                    sample = session.add_sample(start_position, last_fresh, float(meter_input))
+                    session.write_draft(output_path)
+                    message = f"Sample factor: {sample.meters_per_world_unit:.5f} m/world-unit"
+                    if len(session.samples) >= required_samples:
+                        try:
+                            calibration = session.result()
+                        except ValueError as error:
+                            session.write_draft(output_path, error=str(error))
+                            raise
+                        calibration.save_atomic(output_path)
+                        print(json.dumps(calibration.to_dict(), ensure_ascii=False, indent=2))
+                        return 0
+                    stage = "start"
+                    start_position = None
+                    meter_input = ""
+            remaining = config.interval_seconds - (time.per_counter() - loop_started)
+            if remaining > 0:
+                time.sleep(remaining)
+    finally:
+        try:
+            cv2.destroyWindow(window)
+        except cv2.error:
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -130,6 +284,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         matcher = _build_matcher(config)
+        if args.command == "calibrate-distance":
+            return _run_calibration(config, matcher, args.output, args.samples)
         if args.command == "evaluate-sequence":
             report = evaluate_scenario(args.scenario, config, matcher)
             rendered = json.dumps(report, ensure_ascii=False, indent=2)
@@ -169,6 +325,18 @@ def main(argv: list[str] | None = None) -> int:
                 else None
             )
             poi_progress = PoiProgress.load(config.poi.progress_path) if poi_catalog else None
+            navigation = (
+                NavigationController(
+                    poi_catalog,
+                    poi_progress,
+                    target_kinds=set(config.poi.target_kinds),
+                    calibration=load_calibration(config.navigation.calibration_path),
+                )
+                if poi_catalog is not None
+                and poi_progress is not None
+                and config.navigation.enabled
+                else None
+            )
             view = DebugMapView(
                 load_image(config.debug_map_path),
                 layer_maps,
@@ -176,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
                 poi_kinds=set(config.poi.kinds),
                 poi_target_kinds=set(config.poi.target_kinds),
                 poi_progress=poi_progress,
+                navigation=navigation,
             )
             previous = time.perf_counter()
             try:

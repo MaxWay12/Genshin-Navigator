@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from math import hypot
+from math import hypot, isfinite
 from pathlib import Path
 from typing import Iterable
 
@@ -65,13 +65,71 @@ class PointOfInterest:
         }
 
 
+@dataclass(frozen=True)
+class MapSpaceMetric:
+    """Linear conversion from a coordinate space delta to HoYoLAB world units."""
+
+    region_id: str
+    layer_id: str
+    coordinate_space: CoordinateSpace
+    local_to_world: tuple[tuple[float, float], tuple[float, float]]
+
+    def __post_init__(self) -> None:
+        (a, b), (c, d) = self.local_to_world
+        if not all(isfinite(value) for value in (a, b, c, d)):
+            raise ValueError("Map-space metric must contain finite values")
+        if abs(a * d - b * c) < 1e-12:
+            raise ValueError("Map-space metric must be invertible")
+
+    @property
+    def key(self) -> tuple[str, str, CoordinateSpace]:
+        return self.region_id, self.layer_id, self.coordinate_space
+
+    def world_delta(self, dx: float, dy: float) -> tuple[float, float]:
+        (a, b), (c, d) = self.local_to_world
+        return a * dx + b * dy, c * dx + d * dy
+
+    def world_distance(self, dx: float, dy: float) -> float:
+        world_dx, world_dy = self.world_delta(dx, dy)
+        return hypot(world_dx, world_dy)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, object]) -> MapSpaceMetric:
+        matrix = raw["local_to_world"]
+        if not isinstance(matrix, list) or len(matrix) != 2:
+            raise ValueError("local_to_world must be a 2x2 matrix")
+        rows = tuple(tuple(float(value) for value in row) for row in matrix)
+        if any(len(row) != 2 for row in rows):
+            raise ValueError("local_to_world must be a 2x2 matrix")
+        return cls(
+            region_id=str(raw["region_id"]),
+            layer_id=str(raw["layer_id"]),
+            coordinate_space=CoordinateSpace(str(raw["coordinate_space"])),
+            local_to_world=rows,  # type: ignore[arg-type]
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "region_id": self.region_id,
+            "layer_id": self.layer_id,
+            "coordinate_space": self.coordinate_space.value,
+            "local_to_world": [list(row) for row in self.local_to_world],
+        }
+
+
 class PoiCatalog:
-    def __init__(self, pois: Iterable[PointOfInterest]):
+    def __init__(
+        self,
+        pois: Iterable[PointOfInterest],
+        metrics: Iterable[MapSpaceMetric] = (),
+    ):
         self.pois = tuple(pois)
+        self.metrics = tuple(metrics)
         self._by_space: dict[tuple[str, str, CoordinateSpace], list[PointOfInterest]] = {}
         for poi in self.pois:
             key = (poi.region_id, poi.layer_id, poi.coordinate_space)
             self._by_space.setdefault(key, []).append(poi)
+        self._metrics_by_space = {metric.key: metric for metric in self.metrics}
 
     @classmethod
     def load(cls, path: str | Path) -> PoiCatalog:
@@ -79,7 +137,10 @@ class PoiCatalog:
             raw = json.load(stream)
         if int(raw.get("format_version", 0)) != 1:
             raise ValueError("Unsupported POI catalog format")
-        return cls(PointOfInterest.from_dict(item) for item in raw["pois"])
+        return cls(
+            (PointOfInterest.from_dict(item) for item in raw["pois"]),
+            (MapSpaceMetric.from_dict(item) for item in raw.get("spaces", [])),
+        )
 
     def on_layer(self, position: MapPosition) -> tuple[PointOfInterest, ...]:
         key = (position.region_id, position.layer_id, position.coordinate_space)
@@ -107,6 +168,15 @@ class PoiCatalog:
         )
         return ranked[:limit]
 
+    def world_distance(self, position: MapPosition, poi: PointOfInterest) -> float | None:
+        if not poi.same_space(position):
+            raise ValueError("Cannot measure distance across different map layers")
+        key = (position.region_id, position.layer_id, position.coordinate_space)
+        metric = self._metrics_by_space.get(key)
+        if metric is None:
+            return None
+        return metric.world_distance(poi.x - position.x, poi.y - position.y)
+
 
 class PoiProgress:
     def __init__(self, path: str | Path, collected_ids: Iterable[str] = ()):
@@ -126,6 +196,13 @@ class PoiProgress:
 
     def mark_collected(self, poi_id: str) -> None:
         self.collected_ids.add(poi_id)
+        self._save()
+
+    def unmark_collected(self, poi_id: str) -> None:
+        self.collected_ids.discard(poi_id)
+        self._save()
+
+    def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         temporary.write_text(
