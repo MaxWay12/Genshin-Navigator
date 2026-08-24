@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ctypes
 from math import cos, radians, sin
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -13,6 +15,14 @@ from .tracker import TrackerSnapshot, TrackerState
 
 
 class DebugMapView:
+    _NUMPAD_ACTIONS = {
+        "previous": 0x64,  # VK_NUMPAD4
+        "next": 0x66,  # VK_NUMPAD6
+        "skip": 0x62,  # VK_NUMPAD2
+        "collected": 0x65,  # VK_NUMPAD5
+        "undo": 0x68,  # VK_NUMPAD8
+    }
+
     def __init__(
         self,
         atlas: np.ndarray,
@@ -37,6 +47,9 @@ class DebugMapView:
         self._poi_target_kinds = poi_target_kinds
         self._poi_progress = poi_progress
         self._navigation = navigation
+        self._numpad_was_down = {
+            action: False for action in self._NUMPAD_ACTIONS
+        }
         self._active_layer_id = ""
         font_path = Path("C:/Windows/Fonts/arial.ttf")
         self._unicode_font = (
@@ -166,6 +179,7 @@ class DebugMapView:
             self._draw_direction_arrow(canvas, navigation, y)
         cv2.imshow(self.window_name, canvas)
         key = cv2.waitKey(1) & 0xFF
+        global_action = self._poll_global_numpad_action()
         if self._navigation is not None:
             if key in (ord("n"), ord("N")):
                 self._navigation.next_target()
@@ -177,6 +191,16 @@ class DebugMapView:
                 self._navigation.mark_collected()
             elif key in (ord("u"), ord("U")):
                 self._navigation.undo()
+            elif global_action == "next":
+                self._navigation.next_target()
+            elif global_action == "previous":
+                self._navigation.previous_target()
+            elif global_action == "skip":
+                self._navigation.skip()
+            elif global_action == "collected":
+                self._navigation.mark_collected()
+            elif global_action == "undo":
+                self._navigation.undo()
         try:
             visible = cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) >= 1
         except cv2.error:
@@ -187,7 +211,7 @@ class DebugMapView:
     def _navigation_text(
         navigation: NavigationSnapshot | None, layer_poi_count: int
     ) -> tuple[str, str]:
-        controls = "N/P next/previous   S skip session   M collected   U undo   Q quit"
+        controls = "Num4/6 prev/next  Num2 skip  Num5 collected  Num8 undo  Q quit"
         if navigation is None or navigation.target is None:
             return f"target=-  visible_pois={layer_poi_count}", controls
         target = navigation.target
@@ -202,6 +226,18 @@ class DebugMapView:
             f"layer={target.layer_id}",
             controls,
         )
+
+    def _poll_global_numpad_action(
+        self, key_state: Callable[[int], int] | None = None
+    ) -> str | None:
+        read_key = key_state or ctypes.windll.user32.GetAsyncKeyState
+        selected: str | None = None
+        for action, virtual_key in self._NUMPAD_ACTIONS.items():
+            is_down = bool(read_key(virtual_key) & 0x8000)
+            if is_down and not self._numpad_was_down[action] and selected is None:
+                selected = action
+            self._numpad_was_down[action] = is_down
+        return selected
 
     def _put_unicode_text(
         self,
