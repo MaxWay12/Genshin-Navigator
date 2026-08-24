@@ -198,6 +198,41 @@ class ScenarioTests(unittest.TestCase):
             self.assertEqual(rows[5]["tracker"]["position"]["layer_id"], "underground:floor_b")
             self.assertEqual(rows[5]["tracker"]["position"]["schema_version"], 1)
 
+    def test_hidden_minimap_time_is_not_counted_as_lost_tracking(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            frames_dir = root / "frames"
+            frames_dir.mkdir()
+            frames = []
+            for index, value in enumerate((2, 0, 0)):
+                name = f"frame_{index}.png"
+                cv2.imwrite(
+                    str(frames_dir / name),
+                    np.full((4, 4, 3), value, dtype=np.uint8),
+                )
+                frames.append(
+                    {"image": f"frames/{name}", "timestamp_seconds": index * 0.1}
+                )
+            (root / "scenario.json").write_text(
+                json.dumps(
+                    {
+                        "format_version": 1,
+                        "expectations": [],
+                        "frames": frames,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = evaluate_scenario(
+                root,
+                app_config(),
+                FakeLocator(),
+                screen_gate=FakeGate(),  # type: ignore[arg-type]
+            )
+
+            self.assertEqual(report["metrics"]["lost_duration_seconds"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

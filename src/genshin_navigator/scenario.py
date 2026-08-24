@@ -390,8 +390,13 @@ def evaluate_scenario(
     lost_duration = 0.0
     for current, following in zip(rows, rows[1:]):
         tracker_raw = current["tracker"]
+        gate_raw = current["gate"]
         assert isinstance(tracker_raw, dict)
-        if tracker_raw.get("state") == PositionState.LOST.value:
+        assert isinstance(gate_raw, dict)
+        if (
+            gate_raw.get("minimap_present")
+            and tracker_raw.get("state") == PositionState.LOST.value
+        ):
             lost_duration += float(following["timestamp_seconds"]) - float(
                 current["timestamp_seconds"]
             )
