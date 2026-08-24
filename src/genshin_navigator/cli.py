@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import sys
 import time
@@ -145,6 +146,7 @@ def _run_calibration(
     last_fresh_seen = 0.0
     meter_input = ""
     message = ""
+    f8_was_down = False
     try:
         while True:
             loop_started = time.perf_counter()
@@ -178,7 +180,7 @@ def _run_calibration(
             ]
             if stage == "start":
                 lines += [
-                    "Stand at the start in Genshin, then Alt-Tab here and press C.",
+                    "Stand at the start in Genshin and press F8 without Alt-Tab.",
                     "The last fresh surface fix is used; no full-screen image is saved.",
                 ]
             elif stage == "distance":
@@ -188,7 +190,7 @@ def _run_calibration(
                 ]
             else:
                 lines += [
-                    "Walk to the destination in Genshin, then Alt-Tab here and press C.",
+                    "Walk to the destination in Genshin and press F8 without Alt-Tab.",
                     "Esc cancels. The last valid calibration is never overwritten on failure.",
                 ]
             if message:
@@ -205,10 +207,14 @@ def _run_calibration(
                 )
             cv2.imshow(window, panel)
             key = cv2.waitKey(1) & 0xFF
+            f8_down = bool(ctypes.windll.user32.GetAsyncKeyState(0x77) & 0x8000)
+            f8_pressed = f8_down and not f8_was_down
+            f8_was_down = f8_down
+            capture_pressed = f8_pressed or key in (ord("c"), ord("C"))
             if key == 27:
                 session.write_draft(output_path, error="cancelled")
                 return 130
-            if stage == "start" and key in (ord("c"), ord("C")):
+            if stage == "start" and capture_pressed:
                 if last_fresh is None or age > 15.0:
                     message = "No recent fresh surface position; return to Genshin briefly."
                 else:
@@ -227,7 +233,7 @@ def _run_calibration(
                         message = f"Distance {shown} m accepted."
                     else:
                         message = "Distance must be between 100 and 300 m."
-            elif stage == "end" and key in (ord("c"), ord("C")):
+            elif stage == "end" and capture_pressed:
                 if last_fresh is None or age > 15.0:
                     message = "No recent fresh surface position; return to Genshin briefly."
                 else:
