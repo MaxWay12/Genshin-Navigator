@@ -1,0 +1,47 @@
+{
+  "map_path": "assets/world_map.png",
+  "roi": {
+    "left": 28,
+    "top": 28,
+    "width": 240,
+    "height": 240
+  },
+  "interval_seconds": 0.5,
+  "matcher": {
+    "max_features": 10000,
+    "ratio_threshold": 0.72,
+    "min_matches": 12,
+    "min_inliers": 8,
+    "min_scale": 0.2,
+    "max_scale": 5.0
+  },
+  "local_search": {
+    "enabled": true,
+    "radius_px": 80.0,
+    "ratio_threshold": 0.82,
+    "min_matches": 8,
+    "min_inliers": 8
+  },
+  "failure_recorder": {
+    "enabled": false,
+    "output_dir": "artifacts/failures",
+    "pre_frames": 8,
+    "post_frames": 8,
+    "cooldown_seconds": 5.0,
+    "record_acquisition_failures": true,
+    "acquisition_timeout_seconds": 2.0
+  },
+  "screen_gate": {
+    "enabled": false,
+    "template_path": "assets/minimap_compass_n.png",
+    "match_threshold": 0.4,
+    "blank_std_threshold": 12.0
+  },
+  "poi": {
+    "enabled": false,
+    "catalog_path": "datasets/local/poi/fontaine.json",
+    "progress_path": "artifacts/poi_progress.json",
+    "kinds": ["chest", "hydroculus", "waypoint"],
+    "target_kinds": ["chest"]
+  }
+}

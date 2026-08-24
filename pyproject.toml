@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genshin-navigator"
+version = "0.1.0"
+description = "Passive minimap-based position estimator"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0,<3",
+  "opencv-python>=4.10,<5",
+  "Pillow>=10,<12",
+]
+
+[project.scripts]
+genshin-navigator = "genshin_navigator.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
