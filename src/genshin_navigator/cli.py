@@ -247,7 +247,7 @@ def _run_calibration(
                     stage = "start"
                     start_position = None
                     meter_input = ""
-            remaining = config.interval_seconds - (time.per_counter() - loop_started)
+            remaining = config.interval_seconds - (time.perf_counter() - loop_started)
             if remaining > 0:
                 time.sleep(remaining)
     finally:
