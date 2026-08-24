@@ -22,6 +22,7 @@ class MapPositionTests(unittest.TestCase):
         self.assertEqual(
             position.to_dict(),
             {
+                "schema_version": 1,
                 "region_id": "fontaine",
                 "layer_id": "underground:map2:group90:floor78",
                 "coordinate_space": "layer_local",

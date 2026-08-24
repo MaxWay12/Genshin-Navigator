@@ -1,0 +1,4 @@
+# Verified application environment for reproducible development on Python 3.12.
+numpy==2.5.2
+opencv-python==4.14.0.94
+Pillow==11.3.0

@@ -23,6 +23,8 @@ class CoordinateSpace(str, Enum):
 class MapPosition:
     """Stable public position contract shared by navigation components."""
 
+    SCHEMA_VERSION = 1
+
     region_id: str
     layer_id: str
     coordinate_space: CoordinateSpace
@@ -52,6 +54,7 @@ class MapPosition:
 
     def to_dict(self) -> dict[str, object]:
         result = asdict(self)
+        result["schema_version"] = self.SCHEMA_VERSION
         result["coordinate_space"] = self.coordinate_space.value
         result["state"] = self.state.value
         return result

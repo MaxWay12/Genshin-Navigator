@@ -104,6 +104,29 @@ def main() -> int:
     (args.output / "metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    surface_pyramid = {
+        "region_id": "fontaine",
+        "canonical_size": list(atlas.size),
+        "default_map_layer_id": "surface",
+        "levels": [
+            {
+                "id": f"fontaine_surface_{args.zoom.lower()}",
+                "image": "atlas.png",
+                "resolution_scale": 1.0,
+                "map_layer_id": "surface",
+                "coordinate_space": "surface_atlas",
+                "local_to_canonical": [
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                "matcher": {"max_features": 80000},
+            }
+        ],
+    }
+    (args.output / "surface_pyramid.json").write_text(
+        json.dumps(surface_pyramid, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(json.dumps(metadata, ensure_ascii=False))
     return 0
 

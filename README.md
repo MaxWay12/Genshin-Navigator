@@ -18,9 +18,46 @@ MVP пассивно оценивает позицию игрока по изо�
 
 ```powershell
 python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements-lock.txt
 .venv\Scripts\python -m pip install -e .
 Copy-Item config.example.json config.json
 ```
+
+Проверенная среда: Python 3.12, NumPy 2.5.2, OpenCV 4.14.0 и Pillow 11.3.0.
+`pyproject.toml` оставляет совместимые диапазоны для обычной установки, а
+`requirements-lock.txt` воспроизводит среду, на которой выполнен baseline.
+
+### Фонтейн с нуля
+
+После установки следующий путь последовательно получает официальный атлас и
+подземные этажи, строит итоговую пирамиду, загружает POI, запускает тесты и трекер:
+
+```powershell
+.venv\Scripts\python scripts\fetch_hoyolab_atlas.py `
+  datasets\local\references\hoyolab_fontaine_full_n1 `
+  --zoom N1 --x 32:43 --y 12:23
+
+.venv\Scripts\python scripts\fetch_hoyolab_underground.py `
+  datasets\local\references\hoyolab_fontaine_underground --preset fontaine
+
+.venv\Scripts\python scripts\build_underground_pyramid.py `
+  datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
+  datasets\local\references\hoyolab_fontaine_full_n1\surface_pyramid.json `
+  datasets\local\references\hoyolab_fontaine_underground\metadata.json `
+  datasets\local\references\hoyolab_fontaine_full_n1\pyramid.json
+
+.venv\Scripts\python scripts\fetch_hoyolab_poi.py `
+  datasets\local\poi\fontaine.json `
+  --surface-metadata datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
+  --underground-metadata datasets\local\references\hoyolab_fontaine_underground\metadata.json
+
+.venv\Scripts\python -m unittest discover -s tests -v
+.venv\Scripts\genshin-navigator track --config config.json
+```
+
+Карты и POI остаются в `datasets/local` и не входят в Git. Перед первым запуском
+проверьте ROI под своё разрешение экрана; остальные актуальные параметры уже есть
+в `config.example.json`.
 
 1. Поместите цельное изображение карты в `assets/world_map.png`. Оно должно быть
    того же визуального стиля и масштаба, что и содержимое миникарты.
@@ -82,7 +119,14 @@ Copy-Item config.example.json config.json
 Публичная позиция имеет единый контракт: `region_id`, `layer_id`,
 `coordinate_space`, `x`, `y`, `confidence`, `state`, `timestamp` и
 `reference_id`. Команды `locate`/`watch`, live-трекер и записи ошибок используют
-одни и те же поля. Старые плоские `x_px`/`y_px` пока сохранены для совместимости.
+одни и те же поля. В JSON также всегда присутствует `schema_version=1`. Старые
+плоские `x_px`/`y_px` пока сохранены для совместимости.
+
+Семантика состояния является частью контракта. Координаты пригодны для потребителей
+только при `state=TRACKING` и `stale=false`. В `ACQUIRING` и `LOST` поле `position` отсутствует. В
+`RELOCATING` может публиковаться последняя подтверждённая позиция, но только с
+`stale=true`. Будущие Navigation/UI обязаны проверять `state` и `stale`, а не
+интерпретировать внутренние SIFT-метрики самостоятельно.
 
 Для поверхности `coordinate_space=surface_atlas`: `x/y` относятся к общему атласу
 региона. Для подземелья `coordinate_space=layer_local`: `x/y` относятся прямо к
@@ -142,7 +186,7 @@ HoYoLAB. Для полной выгрузки нужно явно передат
 
 .venv\Scripts\python scripts\build_underground_pyramid.py `
   datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
-  datasets\local\references\hoyolab_fontaine_n1\pyramid.json `
+  datasets\local\references\hoyolab_fontaine_full_n1\surface_pyramid.json `
   datasets\local\references\hoyolab_fontaine_underground\metadata.json `
   datasets\local\references\hoyolab_fontaine_full_n1\pyramid.json
 
@@ -165,10 +209,15 @@ HoYoLAB. Для полной выгрузки нужно явно передат
 
 .venv\Scripts\python scripts\build_underground_pyramid.py `
   datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
-  datasets\local\references\hoyolab_fontaine_n1\pyramid.json `
+  datasets\local\references\hoyolab_fontaine_full_n1\surface_pyramid.json `
   datasets\local\references\hoyolab_fontaine_underground\metadata.json `
   datasets\local\references\hoyolab_fontaine_full_n1\pyramid.json
 ```
+
+`fetch_hoyolab_atlas.py` создаёт безопасный базовый
+`surface_pyramid.json`; следующая команда добавляет к нему официальные подземные
+слои и пишет итоговый `pyramid.json`. После этого выполните команду выгрузки POI
+из предыдущего блока и проверьте пути в `config.json`.
 
 Проверка по парным скриншотам игры и внутриигровой карты:
 
@@ -237,3 +286,47 @@ HoYoLAB. Для полной выгрузки нужно явно передат
 ```powershell
 .venv\Scripts\python scripts\replay_failure.py artifacts\failures\<incident>
 ```
+
+## Сценарный benchmark
+
+Recorder сохраняет только crop миникарты с монотонным временем. Полный экран и UID
+на диск не пишутся. Запись начинается сразу после запуска команды, а частота берётся
+из `interval_seconds` текущей конфигурации.
+
+Три базовых сценария записываются в исключённый из Git каталог:
+
+```powershell
+.venv\Scripts\genshin-navigator record-sequence `
+  datasets\local\scenarios\surface_walk --config config.json --duration 20 `
+  --name "surface walk and stop" --expected-start-layer surface `
+  --expected-end-layer surface --stationary-last-seconds 5
+
+.venv\Scripts\genshin-navigator record-sequence `
+  datasets\local\scenarios\surface_teleport --config config.json --duration 30 `
+  --name "surface teleport" --expected-start-layer surface `
+  --expected-end-layer surface
+
+.venv\Scripts\genshin-navigator record-sequence `
+  datasets\local\scenarios\layer_transition --config config.json --duration 30 `
+  --name "surface to underground" --expected-start-layer surface `
+  --expected-end-layer underground:map2:group90:floor78
+```
+
+В третьей команде замените конечный `layer_id` на реально выбранный этаж из
+`pyramid.json`. Начальную и конечную точки сверяйте по внутриигровой карте; при
+необходимости добавьте их в `scenario.json` как контрольные позиции по схеме из
+`datasets/README.md`.
+
+Replay проходит тем же путём, что live-режим: screen gate → matcher/local search →
+tracker. Он ничего не захватывает с экрана:
+
+```powershell
+.venv\Scripts\genshin-navigator evaluate-sequence `
+  datasets\local\scenarios\surface_walk --config config.json `
+  --report artifacts\benchmarks\surface_walk.json
+```
+
+JSON-отчёт различает отсутствие позиции и false lock, измеряет точность слоя,
+acquire/reacquire, длительность `LOST`, stationary jitter и среднюю/P95 задержку.
+Критерии контрольной проверки: false locks = 0, нет одно-кадровых смен слоя,
+reacquire ≤ 3 с и P95 jitter ≤ 5 atlas-px.

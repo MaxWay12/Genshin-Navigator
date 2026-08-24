@@ -1,19 +1,32 @@
 {
-  "map_path": "assets/world_map.png",
+  "map_path": "datasets/local/references/hoyolab_fontaine_full_n1/atlas.png",
+  "pyramid_path": "datasets/local/references/hoyolab_fontaine_full_n1/pyramid.json",
+  "debug_map_path": "datasets/local/references/hoyolab_fontaine_full_n1/atlas.png",
   "roi": {
-    "left": 28,
-    "top": 28,
-    "width": 240,
-    "height": 240
+    "left": 57,
+    "top": 19,
+    "width": 216,
+    "height": 216
   },
-  "interval_seconds": 0.5,
+  "interval_seconds": 0.1,
   "matcher": {
-    "max_features": 10000,
+    "max_features": 80000,
     "ratio_threshold": 0.72,
     "min_matches": 12,
     "min_inliers": 8,
     "min_scale": 0.2,
     "max_scale": 5.0
+  },
+  "tracker": {
+    "min_confidence": 0.35,
+    "min_inliers": 8,
+    "acquire_hits": 2,
+    "relocate_hits": 3,
+    "candidate_radius_px": 18.0,
+    "max_speed_px_per_second": 90.0,
+    "jump_margin_px": 12.0,
+    "smoothing_alpha": 0.4,
+    "lost_timeout_seconds": 1.5
   },
   "local_search": {
     "enabled": true,
@@ -23,7 +36,7 @@
     "min_inliers": 8
   },
   "failure_recorder": {
-    "enabled": false,
+    "enabled": true,
     "output_dir": "artifacts/failures",
     "pre_frames": 8,
     "post_frames": 8,
@@ -32,13 +45,13 @@
     "acquisition_timeout_seconds": 2.0
   },
   "screen_gate": {
-    "enabled": false,
+    "enabled": true,
     "template_path": "assets/minimap_compass_n.png",
     "match_threshold": 0.4,
     "blank_std_threshold": 12.0
   },
   "poi": {
-    "enabled": false,
+    "enabled": true,
     "catalog_path": "datasets/local/poi/fontaine.json",
     "progress_path": "artifacts/poi_progress.json",
     "kinds": ["chest", "hydroculus", "waypoint"],

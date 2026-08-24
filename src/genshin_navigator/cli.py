@@ -16,6 +16,7 @@ from .pyramid import Locator, PyramidMatcher, load_pyramid
 from .poi import PoiCatalog, PoiProgress
 from .position import CoordinateSpace, MapPosition, PositionState
 from .screen_gate import MinimapScreenGate
+from .scenario import evaluate_scenario, record_scenario
 from .tracker import LiveTracker
 
 
@@ -41,6 +42,27 @@ def _parser() -> argparse.ArgumentParser:
 
     evaluate = subparsers.add_parser("evaluate", help="Measure localization on an annotated dataset")
     evaluate.add_argument("dataset", help="Directory containing annotations.json")
+
+    record_sequence = subparsers.add_parser(
+        "record-sequence",
+        help="Record a privacy-safe minimap sequence for stateful evaluation",
+    )
+    record_sequence.add_argument("output", help="New scenario directory")
+    record_sequence.add_argument("--config", default="config.json")
+    record_sequence.add_argument("--duration", type=float, required=True)
+    record_sequence.add_argument("--name", default="scenario")
+    record_sequence.add_argument("--expected-region", default="fontaine")
+    record_sequence.add_argument("--expected-start-layer")
+    record_sequence.add_argument("--expected-end-layer")
+    record_sequence.add_argument("--stationary-last-seconds", type=float, default=0.0)
+
+    evaluate_sequence = subparsers.add_parser(
+        "evaluate-sequence",
+        help="Replay a minimap sequence through the live tracking pipeline",
+    )
+    evaluate_sequence.add_argument("scenario", help="Directory containing scenario.json")
+    evaluate_sequence.add_argument("--config", default="config.json")
+    evaluate_sequence.add_argument("--report", help="Optional JSON report path")
     return parser
 
 
@@ -93,7 +115,31 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         config = load_config(args.config)
+        if args.command == "record-sequence":
+            manifest = record_scenario(
+                config,
+                args.output,
+                args.duration,
+                name=args.name,
+                expected_region_id=args.expected_region,
+                expected_start_layer=args.expected_start_layer,
+                expected_end_layer=args.expected_end_layer,
+                stationary_last_seconds=args.stationary_last_seconds,
+            )
+            print(manifest)
+            return 0
+
         matcher = _build_matcher(config)
+        if args.command == "evaluate-sequence":
+            report = evaluate_scenario(args.scenario, config, matcher)
+            rendered = json.dumps(report, ensure_ascii=False, indent=2)
+            if args.report:
+                report_path = Path(args.report).resolve()
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                report_path.write_text(rendered, encoding="utf-8")
+            print(rendered)
+            return 0 if report["passed"] is not False else 2
+
         if args.command == "locate":
             result = _locate_once(config, matcher, args.screenshot)
             print(json.dumps(result, ensure_ascii=False))

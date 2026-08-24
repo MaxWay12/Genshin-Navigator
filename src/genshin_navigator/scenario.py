@@ -1,0 +1,471 @@
+from __future__ import annotations
+
+import json
+import math
+import statistics
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable, Iterable
+
+import cv2
+import numpy as np
+
+from .capture import crop_roi, grab_screen, load_image
+from .config import AppConfig
+from .pyramid import Locator, PyramidMatcher
+from .position import PositionState
+from .screen_gate import MinimapScreenGate, ScreenGateResult
+from .tracker import LiveTracker
+
+
+SCENARIO_FORMAT_VERSION = 1
+
+
+def _percentile(values: Iterable[float], percentile: float) -> float | None:
+    ordered = sorted(float(value) for value in values)
+    if not ordered:
+        return None
+    index = max(0, min(len(ordered) - 1, math.ceil(len(ordered) * percentile) - 1))
+    return ordered[index]
+
+
+def _safe_frame_path(root: Path, relative: str) -> Path:
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as error:
+        raise ValueError(f"Scenario frame escapes its directory: {relative}") from error
+    return candidate
+
+
+def load_scenario(path: str | Path) -> tuple[Path, dict[str, object]]:
+    root = Path(path).resolve()
+    manifest_path = root / "scenario.json"
+    with manifest_path.open("r", encoding="utf-8") as stream:
+        manifest = json.load(stream)
+    if int(manifest.get("format_version", 0)) != SCENARIO_FORMAT_VERSION:
+        raise ValueError("Unsupported scenario format_version")
+    frames = manifest.get("frames")
+    if not isinstance(frames, list) or not frames:
+        raise ValueError("Scenario must contain at least one frame")
+    previous = -math.inf
+    for item in frames:
+        if not isinstance(item, dict):
+            raise ValueError("Scenario frames must be objects")
+        timestamp = float(item["timestamp_seconds"])
+        if timestamp < 0 or timestamp <= previous:
+            raise ValueError("Scenario timestamps must be non-negative and strictly increasing")
+        previous = timestamp
+        frame_path = _safe_frame_path(root, str(item["image"]))
+        if not frame_path.is_file():
+            raise ValueError(f"Scenario frame does not exist: {item['image']}")
+    expectations = manifest.get("expectations", [])
+    if not isinstance(expectations, list):
+        raise ValueError("Scenario expectations must be a list")
+    for phase in expectations:
+        if not isinstance(phase, dict):
+            raise ValueError("Scenario expectations must be objects")
+        start = float(phase["start_seconds"])
+        end = float(phase["end_seconds"])
+        if start < 0 or end < start:
+            raise ValueError("Scenario expectation has an invalid time range")
+        tracking = str(phase.get("tracking", "optional"))
+        if tracking not in {"required", "optional"}:
+            raise ValueError("Scenario expectation tracking must be required or optional")
+    return root, manifest
+
+
+def _build_expectations(
+    duration_seconds: float,
+    *,
+    expected_region_id: str | None,
+    expected_start_layer: str | None,
+    expected_end_layer: str | None,
+    stationary_last_seconds: float,
+) -> list[dict[str, object]]:
+    expectations: list[dict[str, object]] = []
+    edge_window = min(3.0, duration_seconds / 3.0)
+    if expected_start_layer:
+        expectations.append(
+            {
+                "name": "start",
+                "start_seconds": 0.0,
+                "end_seconds": round(edge_window, 3),
+                "tracking": "required",
+                "region_id": expected_region_id,
+                "layer_id": expected_start_layer,
+            }
+        )
+    if expected_end_layer:
+        end_start = max(0.0, duration_seconds - max(5.0, stationary_last_seconds))
+        phase: dict[str, object] = {
+            "name": "end",
+            "start_seconds": round(end_start, 3),
+            "end_seconds": round(duration_seconds, 3),
+            "tracking": "required",
+            "region_id": expected_region_id,
+            "layer_id": expected_end_layer,
+        }
+        if stationary_last_seconds > 0:
+            phase["stationary_from_seconds"] = round(
+                max(end_start, duration_seconds - stationary_last_seconds), 3
+            )
+        expectations.append(phase)
+    return expectations
+
+
+def record_scenario(
+    config: AppConfig,
+    output: str | Path,
+    duration_seconds: float,
+    *,
+    name: str = "scenario",
+    expected_region_id: str | None = "fontaine",
+    expected_start_layer: str | None = None,
+    expected_end_layer: str | None = None,
+    stationary_last_seconds: float = 0.0,
+    capture_screen: Callable[[], np.ndarray] = grab_screen,
+    clock: Callable[[], float] = time.perf_counter,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> Path:
+    if duration_seconds <= 0:
+        raise ValueError("Scenario duration must be positive")
+    if stationary_last_seconds < 0 or stationary_last_seconds > duration_seconds:
+        raise ValueError("stationary_last_seconds must be within the recording duration")
+    root = Path(output).resolve()
+    manifest_path = root / "scenario.json"
+    if manifest_path.exists():
+        raise FileExistsError(f"Scenario already exists: {manifest_path}")
+    frames_dir = root / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    screen_gate = (
+        MinimapScreenGate.from_config(config.screen_gate)
+        if config.screen_gate.enabled
+        else None
+    )
+    started = clock()
+    next_capture = started
+    frames: list[dict[str, object]] = []
+    while True:
+        now = clock()
+        elapsed = now - started
+        if frames and elapsed > duration_seconds:
+            break
+        minimap = crop_roi(capture_screen(), config.roi)
+        gate = (
+            screen_gate.check(minimap)
+            if screen_gate is not None
+            else ScreenGateResult(True, 1.0)
+        )
+        filename = f"minimap_{len(frames):05d}.png"
+        relative = f"frames/{filename}"
+        if not cv2.imwrite(str(frames_dir / filename), minimap):
+            raise OSError(f"Could not save scenario frame: {filename}")
+        frames.append(
+            {
+                "image": relative,
+                "timestamp_seconds": round(elapsed, 6),
+                "recorded_minimap_present": gate.minimap_present,
+                "recorded_gate_confidence": gate.confidence,
+                "recorded_gate_reason": gate.reason,
+            }
+        )
+        next_capture += config.interval_seconds
+        remaining = next_capture - clock()
+        if remaining > 0:
+            sleeper(remaining)
+    manifest = {
+        "format_version": SCENARIO_FORMAT_VERSION,
+        "name": name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "privacy": "Only the configured minimap crop is stored; full game frames are never written.",
+        "interval_seconds": config.interval_seconds,
+        "roi": {
+            "left": config.roi.left,
+            "top": config.roi.top,
+            "width": config.roi.width,
+            "height": config.roi.height,
+        },
+        "expectations": _build_expectations(
+            duration_seconds,
+            expected_region_id=expected_region_id,
+            expected_start_layer=expected_start_layer,
+            expected_end_layer=expected_end_layer,
+            stationary_last_seconds=stationary_last_seconds,
+        ),
+        "frames": frames,
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return manifest_path
+
+
+def _phase_at(expectations: list[dict[str, object]], timestamp: float) -> dict[str, object] | None:
+    for phase in reversed(expectations):
+        if float(phase["start_seconds"]) <= timestamp <= float(phase["end_seconds"]):
+            return phase
+    return None
+
+
+def _confirmed_layer_runs(rows: list[dict[str, object]]) -> list[tuple[str, int]]:
+    layers: list[str] = []
+    for row in rows:
+        tracker = row["tracker"]
+        assert isinstance(tracker, dict)
+        position = tracker.get("position")
+        if (
+            tracker.get("state") == PositionState.TRACKING.value
+            and not tracker.get("stale")
+            and isinstance(position, dict)
+        ):
+            layers.append(str(position["layer_id"]))
+    runs: list[tuple[str, int]] = []
+    for layer in layers:
+        if runs and runs[-1][0] == layer:
+            runs[-1] = (layer, runs[-1][1] + 1)
+        else:
+            runs.append((layer, 1))
+    return runs
+
+
+def evaluate_scenario(
+    path: str | Path,
+    config: AppConfig,
+    matcher: Locator,
+    *,
+    screen_gate: MinimapScreenGate | None = None,
+) -> dict[str, object]:
+    root, manifest = load_scenario(path)
+    expectations = [dict(item) for item in manifest.get("expectations", [])]
+    gate = screen_gate
+    if gate is None and config.screen_gate.enabled:
+        gate = MinimapScreenGate.from_config(config.screen_gate)
+    tracker = LiveTracker(config.tracker)
+    rows: list[dict[str, object]] = []
+    processing_ms: list[float] = []
+    visible_transitions: list[float] = []
+    previous_visible = False
+
+    for item in manifest["frames"]:
+        timestamp = float(item["timestamp_seconds"])
+        minimap = load_image(_safe_frame_path(root, str(item["image"])))
+        started = time.perf_counter()
+        gate_result = gate.check(minimap) if gate is not None else ScreenGateResult(True, 1.0)
+        if gate_result.minimap_present and not previous_visible:
+            visible_transitions.append(timestamp)
+        previous_visible = gate_result.minimap_present
+        localization = None
+        if not gate_result.minimap_present:
+            snapshot = tracker.pause(timestamp, gate_result.reason or "minimap_not_visible")
+        else:
+            hint = tracker.position_hint
+            localization = (
+                matcher.locate_near(minimap, hint, config.local_search)
+                if (
+                    config.local_search.enabled
+                    and hint is not None
+                    and isinstance(matcher, PyramidMatcher)
+                )
+                else matcher.locate(minimap)
+            )
+            snapshot = tracker.update(localization, timestamp)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        processing_ms.append(elapsed_ms)
+        phase = _phase_at(expectations, timestamp)
+        rows.append(
+            {
+                "image": item["image"],
+                "timestamp_seconds": timestamp,
+                "gate": {
+                    "minimap_present": gate_result.minimap_present,
+                    "confidence": gate_result.confidence,
+                    "reason": gate_result.reason,
+                },
+                "localization": localization.to_dict() if localization is not None else None,
+                "tracker": snapshot.to_dict(),
+                "expectation": phase.get("name") if phase else None,
+                "processing_ms": round(elapsed_ms, 2),
+            }
+        )
+
+    false_locks = 0
+    layer_samples = 0
+    correct_layers = 0
+    required_frames = 0
+    correct_required_frames = 0
+    position_errors: list[float] = []
+    for row in rows:
+        phase = _phase_at(expectations, float(row["timestamp_seconds"]))
+        tracker_raw = row["tracker"]
+        assert isinstance(tracker_raw, dict)
+        position = tracker_raw.get("position")
+        confirmed = bool(
+            tracker_raw.get("state") == PositionState.TRACKING.value
+            and not tracker_raw.get("stale")
+            and isinstance(position, dict)
+        )
+        gate_raw = row["gate"]
+        assert isinstance(gate_raw, dict)
+        if (
+            phase is not None
+            and phase.get("tracking") == "required"
+            and gate_raw.get("minimap_present")
+        ):
+            required_frames += 1
+            if confirmed and _position_matches_dict(tracker_raw, phase):
+                correct_required_frames += 1
+        if phase is None or not confirmed:
+            continue
+        if phase.get("layer_id"):
+            layer_samples += 1
+            if str(position["layer_id"]) == str(phase["layer_id"]):
+                correct_layers += 1
+        if not _position_matches_dict(tracker_raw, phase):
+            false_locks += 1
+        expected_position = phase.get("position")
+        if isinstance(expected_position, dict):
+            position_errors.append(
+                math.hypot(
+                    float(position["x"]) - float(expected_position["x"]),
+                    float(position["y"]) - float(expected_position["y"]),
+                )
+            )
+
+    acquisition_delays: list[float | None] = []
+    for visible_at in visible_transitions:
+        next_hidden = next(
+            (
+                float(row["timestamp_seconds"])
+                for row in rows
+                if float(row["timestamp_seconds"]) > visible_at
+                and isinstance(row["gate"], dict)
+                and not row["gate"].get("minimap_present")
+            ),
+            math.inf,
+        )
+        acquired = next(
+            (
+                float(row["timestamp_seconds"])
+                for row in rows
+                if float(row["timestamp_seconds"]) >= visible_at
+                and float(row["timestamp_seconds"]) < next_hidden
+                and isinstance(row["tracker"], dict)
+                and row["tracker"].get("state") == PositionState.TRACKING.value
+                and not row["tracker"].get("stale")
+                and row["tracker"].get("position") is not None
+            ),
+            None,
+        )
+        acquisition_delays.append(None if acquired is None else round(acquired - visible_at, 4))
+
+    stationary_jitter: list[float] = []
+    for phase in expectations:
+        stationary_from = phase.get("stationary_from_seconds")
+        if stationary_from is None:
+            continue
+        samples: list[tuple[float, float]] = []
+        for row in rows:
+            timestamp = float(row["timestamp_seconds"])
+            if not float(stationary_from) <= timestamp <= float(phase["end_seconds"]):
+                continue
+            tracker_raw = row["tracker"]
+            assert isinstance(tracker_raw, dict)
+            position = tracker_raw.get("position")
+            if (
+                tracker_raw.get("state") == PositionState.TRACKING.value
+                and not tracker_raw.get("stale")
+                and isinstance(position, dict)
+                and (not phase.get("layer_id") or position.get("layer_id") == phase.get("layer_id"))
+            ):
+                samples.append((float(position["x"]), float(position["y"])))
+        if len(samples) >= 2:
+            median_x = statistics.median(point[0] for point in samples)
+            median_y = statistics.median(point[1] for point in samples)
+            stationary_jitter.extend(
+                math.hypot(x - median_x, y - median_y) for x, y in samples
+            )
+
+    lost_duration = 0.0
+    for current, following in zip(rows, rows[1:]):
+        tracker_raw = current["tracker"]
+        assert isinstance(tracker_raw, dict)
+        if tracker_raw.get("state") == PositionState.LOST.value:
+            lost_duration += float(following["timestamp_seconds"]) - float(
+                current["timestamp_seconds"]
+            )
+
+    runs = _confirmed_layer_runs(rows)
+    one_frame_layer_runs = sum(
+        1
+        for index, (_, count) in enumerate(runs)
+        if count == 1 and 0 < index < len(runs) - 1
+    )
+    successful_delays = [value for value in acquisition_delays if value is not None]
+    max_delay = max(successful_delays) if successful_delays else None
+    jitter_p95 = _percentile(stationary_jitter, 0.95)
+    annotated = bool(expectations)
+    tracking_coverage = (
+        correct_required_frames / required_frames if required_frames else None
+    )
+    passed = None
+    if annotated:
+        passed = bool(
+            false_locks == 0
+            and one_frame_layer_runs == 0
+            and all(value is not None and value <= 3.0 for value in acquisition_delays)
+            and (jitter_p95 is None or jitter_p95 <= 5.0)
+            and (tracking_coverage is None or tracking_coverage >= 0.8)
+        )
+    return {
+        "format_version": SCENARIO_FORMAT_VERSION,
+        "scenario": str(root),
+        "name": manifest.get("name", root.name),
+        "annotated": annotated,
+        "passed": passed,
+        "metrics": {
+            "total_frames": len(rows),
+            "visible_frames": sum(bool(row["gate"]["minimap_present"]) for row in rows),
+            "tracking_frames": sum(
+                row["tracker"]["state"] == PositionState.TRACKING.value
+                and not row["tracker"].get("stale")
+                and row["tracker"].get("position") is not None
+                for row in rows
+            ),
+            "required_tracking_coverage": (
+                round(tracking_coverage, 4) if tracking_coverage is not None else None
+            ),
+            "false_locks": false_locks,
+            "layer_accuracy": round(correct_layers / layer_samples, 4) if layer_samples else None,
+            "layer_samples": layer_samples,
+            "one_frame_layer_runs": one_frame_layer_runs,
+            "acquisition_delays_seconds": acquisition_delays,
+            "max_acquisition_delay_seconds": max_delay,
+            "lost_duration_seconds": round(lost_duration, 4),
+            "stationary_jitter_p95_px": round(jitter_p95, 3) if jitter_p95 is not None else None,
+            "median_position_error_px": round(statistics.median(position_errors), 3) if position_errors else None,
+            "p95_position_error_px": round(_percentile(position_errors, 0.95), 3) if position_errors else None,
+            "mean_processing_ms": round(statistics.mean(processing_ms), 2),
+            "p95_processing_ms": round(_percentile(processing_ms, 0.95), 2),
+        },
+        "frames": rows,
+    }
+
+
+def _position_matches_dict(tracker: dict[str, object], phase: dict[str, object]) -> bool:
+    position = tracker.get("position")
+    if not isinstance(position, dict):
+        return False
+    if phase.get("region_id") and position.get("region_id") != phase.get("region_id"):
+        return False
+    if phase.get("layer_id") and position.get("layer_id") != phase.get("layer_id"):
+        return False
+    expected_position = phase.get("position")
+    if isinstance(expected_position, dict):
+        error = math.hypot(
+            float(position["x"]) - float(expected_position["x"]),
+            float(position["y"]) - float(expected_position["y"]),
+        )
+        return error <= float(expected_position.get("tolerance_px", 20.0))
+    return True
