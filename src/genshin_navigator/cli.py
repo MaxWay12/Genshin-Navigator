@@ -36,11 +36,17 @@ from .hoyolab_poi import (
     fetch_labels,
     fetch_points,
 )
+from .hoyolab_auth import HoyoLabAuthSession
 from .position import CoordinateSpace, MapPosition, PositionState
 from .poi_guidance import (
     HoyoLabPoiHintProvider,
     PoiHintService,
     SqlitePoiHintRepository,
+)
+from .progress_sync import (
+    HoyoLabRemoteProgressProvider,
+    ProgressSyncService,
+    SqliteProgressSyncStore,
 )
 from .screen_gate import MinimapScreenGate
 from .scenario import evaluate_scenario, record_scenario
@@ -113,6 +119,31 @@ def _parser() -> argparse.ArgumentParser:
     )
     data_status.add_argument("--config", default="config.json")
     data_status.add_argument("--region", default=None)
+
+    hoyolab_login = subparsers.add_parser(
+        "hoyolab-login", help="Sign in to HoYoLAB in an isolated WebView2 window"
+    )
+    hoyolab_login.add_argument("--config", default="config.json")
+
+    hoyolab_logout = subparsers.add_parser(
+        "hoyolab-logout", help="Clear the isolated HoYoLAB session"
+    )
+    hoyolab_logout.add_argument("--config", default="config.json")
+
+    progress_status = subparsers.add_parser(
+        "progress-status", help="Show local and remote progress-sync state"
+    )
+    progress_status.add_argument("--config", default="config.json")
+    progress_status.add_argument("--region", default=None)
+
+    progress_sync = subparsers.add_parser(
+        "progress-sync", help="Preview and additively sync HoYoLAB progress"
+    )
+    progress_sync.add_argument("--config", default="config.json")
+    progress_sync.add_argument("--region", default=None)
+    progress_sync.add_argument(
+        "--yes", action="store_true", help="Apply the preview without prompting"
+    )
     return parser
 
 
@@ -125,6 +156,34 @@ def _runtime_data(config: AppConfig) -> DataBundle | None:
         catalog_path=config.poi.catalog_path,
         progress_path=config.poi.progress_path,
         region_id=config.data.region_id,
+    )
+
+
+def _auth_session(config: AppConfig) -> HoyoLabAuthSession:
+    return HoyoLabAuthSession(config.progress_sync.auth_profile_dir)
+
+
+def _progress_sync_service(config: AppConfig) -> ProgressSyncService:
+    if not config.progress_sync.enabled:
+        raise ValueError("Progress sync is disabled in config")
+    if config.data.storage_backend == "json":
+        raise ValueError("progress-sync requires data.storage_backend=auto or sqlite")
+    data = _runtime_data(config)
+    if data is None or data.provider is None:
+        raise ValueError("progress-sync requires an initialized SQLite data store")
+    cookie_header = _auth_session(config).cookie_header()
+    remote = HoyoLabRemoteProgressProvider(
+        cookie_header,
+        map_id=config.data.map_id,
+        lang=config.data.lang,
+        timeout_seconds=config.progress_sync.request_timeout_seconds,
+        retry_count=config.progress_sync.retry_count,
+        min_write_interval_seconds=(
+            config.progress_sync.min_write_interval_seconds
+        ),
+    )
+    return ProgressSyncService(
+        SqliteProgressSyncStore(config.data.database_path), remote
     )
 
 
@@ -375,6 +434,49 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         config = load_config(args.config)
+        if args.command == "hoyolab-login":
+            if not config.progress_sync.enabled:
+                raise ValueError("Progress sync is disabled in config")
+            connected = _auth_session(config).login()
+            if connected:
+                print("HoYoLAB connected. The isolated session will be reused.")
+                return 0
+            print("HoYoLAB login was closed before authorization.", file=sys.stderr)
+            return 2
+        if args.command == "hoyolab-logout":
+            _auth_session(config).logout()
+            print("HoYoLAB session removed.")
+            return 0
+        if args.command == "progress-status":
+            if config.data.storage_backend == "json":
+                raise ValueError("progress-status requires the SQLite data backend")
+            region_id = args.region or config.data.region_id
+            data = _runtime_data(config)
+            assert data is not None and data.provider is not None
+            report = data.provider.status(
+                region_id,
+                hint_refresh_after_days=config.poi_guidance.refresh_after_days,
+            )
+            report["backend"] = data.backend
+            report["hoyolab_profile_present"] = _auth_session(config).profile_present
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "progress-sync":
+            region_id = args.region or config.data.region_id
+            service = _progress_sync_service(config)
+            plan = service.preview(region_id)
+            print(json.dumps({"preview": plan.to_dict()}, ensure_ascii=False, indent=2))
+            if not args.yes:
+                try:
+                    answer = input("Apply this additive sync? [y/N] ").strip().lower()
+                except EOFError:
+                    answer = ""
+                if answer not in {"y", "yes", "д", "да"}:
+                    print("Progress sync cancelled; no changes were made.")
+                    return 0
+            result = service.apply(plan)
+            print(json.dumps({"result": result.to_dict()}, ensure_ascii=False, indent=2))
+            return 0 if not result.failed_push_ids else 2
         if args.command == "sync-data":
             region_id = args.region or config.data.region_id
             print(json.dumps(

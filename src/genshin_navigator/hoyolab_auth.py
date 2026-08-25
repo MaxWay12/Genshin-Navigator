@@ -190,7 +190,16 @@ class HoyoLabAuthSession:
                 or len(self.profile_dir.parts) < 3
             ):
                 raise HoyoLabAuthError("Refusing to remove an unsafe auth profile path")
-            shutil.rmtree(self.profile_dir)
+            for attempt in range(5):
+                try:
+                    shutil.rmtree(self.profile_dir)
+                    break
+                except PermissionError as error:
+                    if attempt == 4:
+                        raise HoyoLabAuthError(
+                            "WebView2 is still using the HoYoLAB profile; try logout again"
+                        ) from error
+                    time.sleep(0.25 * (attempt + 1))
 
 
 def has_auth_cookie_from_header(header: str) -> bool:

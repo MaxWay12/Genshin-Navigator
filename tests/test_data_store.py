@@ -62,7 +62,7 @@ class SqliteDataProviderTests(unittest.TestCase):
         self.assertEqual(reopened.catalog().pois[0].id, "one")
         self.assertEqual(reopened.status()["schema_version"], SCHEMA_VERSION)
 
-    def test_migrates_v1_to_v2_without_losing_content_or_progress(self) -> None:
+    def test_migrates_v1_to_current_without_losing_content_or_progress(self) -> None:
         provider = SqliteDataProvider(self.database)
         provider.replace_content(
             "fontaine", [poi("one")], [metric()], content_version="fixture-1"
@@ -77,13 +77,43 @@ class SqliteDataProviderTests(unittest.TestCase):
 
         self.assertEqual(migrated.catalog().pois[0].id, "one")
         self.assertEqual(migrated.progress().collected_ids, {"one"})
-        self.assertEqual(migrated.status()["schema_version"], 2)
+        self.assertEqual(migrated.status()["schema_version"], SCHEMA_VERSION)
         with closing(sqlite3.connect(self.database)) as connection:
             tables = {row[0] for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )}
         self.assertIn("poi_hints", tables)
         self.assertIn("poi_hint_assets", tables)
+        self.assertIn("progress_sync_runs", tables)
+
+    def test_migrates_v2_progress_to_pending_push(self) -> None:
+        provider = SqliteDataProvider(self.database)
+        provider.replace_content(
+            "fontaine", [poi("one")], [metric()], content_version="fixture-1"
+        )
+        with closing(sqlite3.connect(self.database)) as connection, connection:
+            connection.execute("ALTER TABLE progress RENAME TO progress_v3")
+            connection.execute(
+                "CREATE TABLE progress(poi_id TEXT PRIMARY KEY, collected INTEGER "
+                "NOT NULL, sync_state TEXT NOT NULL DEFAULT 'local', updated_at TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO progress VALUES ('one', 1, 'local', 'fixture-time')"
+            )
+            connection.execute("DROP TABLE progress_v3")
+            connection.execute("DROP TABLE progress_sync_runs")
+            connection.execute("DROP TABLE remote_progress_unknown")
+            connection.execute("PRAGMA user_version = 2")
+
+        migrated = SqliteDataProvider(self.database)
+
+        self.assertEqual(migrated.progress().collected_ids, {"one"})
+        self.assertEqual(migrated.status()["pending_sync_count"], 1)
+        with closing(sqlite3.connect(self.database)) as connection:
+            row = connection.execute(
+                "SELECT sync_state, remote_ignored FROM progress WHERE poi_id='one'"
+            ).fetchone()
+        self.assertEqual(row, ("pending_push", 0))
 
     def test_auto_imports_legacy_catalog_and_progress_once(self) -> None:
         catalog_path = self.root / "catalog.json"

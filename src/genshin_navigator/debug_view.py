@@ -303,7 +303,7 @@ class DebugMapView:
             self._show_toast("Отметка отменена")
         elif status.confirmed and self._navigation is not None:
             self._navigation.mark_collected()
-            self._show_toast("Сундук отмечен собранным")
+            self._show_toast("Сохранено локально · ожидает sync")
 
     def show(self, snapshot: TrackerSnapshot, fps: float, paused_reason: str | None = None) -> bool:
         layer_id = snapshot.position.layer_id if snapshot.position is not None else snapshot.map_layer_id

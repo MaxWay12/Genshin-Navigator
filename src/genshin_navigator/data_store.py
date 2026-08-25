@@ -13,7 +13,7 @@ from .poi import MapSpaceMetric, PoiCatalog, PoiProgress, PointOfInterest
 from .position import CoordinateSpace
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SOURCE_NAME = "HoYoLAB Interactive Map"
 SOURCE_URL = "https://act.hoyolab.com/ys/app/interactive-map/index.html#/map/2"
 
@@ -59,9 +59,10 @@ class SqlitePoiProgress:
             connection.execute(
                 """
                 INSERT INTO progress(poi_id, collected, sync_state, updated_at)
-                VALUES (?, 1, 'local', ?)
+                VALUES (?, 1, 'pending_push', ?)
                 ON CONFLICT(poi_id) DO UPDATE SET
-                    collected = 1, sync_state = 'local', updated_at = excluded.updated_at
+                    collected = 1, sync_state = 'pending_push',
+                    updated_at = excluded.updated_at, remote_ignored = 0
                 """,
                 (poi_id, now),
             )
@@ -70,14 +71,22 @@ class SqlitePoiProgress:
     def unmark_collected(self, poi_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                "SELECT sync_state FROM progress WHERE poi_id = ?", (poi_id,)
+            ).fetchone()
+            remote_ignored = int(bool(row and str(row[0]) == "synced"))
             connection.execute(
                 """
-                INSERT INTO progress(poi_id, collected, sync_state, updated_at)
-                VALUES (?, 0, 'local', ?)
+                INSERT INTO progress(
+                    poi_id, collected, sync_state, updated_at, remote_ignored
+                )
+                VALUES (?, 0, 'local', ?, ?)
                 ON CONFLICT(poi_id) DO UPDATE SET
-                    collected = 0, sync_state = 'local', updated_at = excluded.updated_at
+                    collected = 0, sync_state = 'local',
+                    updated_at = excluded.updated_at,
+                    remote_ignored = excluded.remote_ignored
                 """,
-                (poi_id, now),
+                (poi_id, now, remote_ignored),
             )
         self.collected_ids.discard(poi_id)
 
@@ -99,7 +108,7 @@ class SqliteDataProvider:
     def _initialize(self) -> None:
         with closing(self._connect()) as connection, connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, SCHEMA_VERSION):
+            if version not in (0, 1, 2, SCHEMA_VERSION):
                 raise ValueError(
                     f"Unsupported data schema version {version}; expected {SCHEMA_VERSION}"
                 )
@@ -137,7 +146,9 @@ class SqliteDataProvider:
                     poi_id TEXT PRIMARY KEY,
                     collected INTEGER NOT NULL CHECK(collected IN (0, 1)),
                     sync_state TEXT NOT NULL DEFAULT 'local',
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    remote_ignored INTEGER NOT NULL DEFAULT 0
+                        CHECK(remote_ignored IN (0, 1))
                 );
                 CREATE TABLE IF NOT EXISTS content_snapshots(
                     region_id TEXT PRIMARY KEY,
@@ -182,8 +193,42 @@ class SqliteDataProvider:
                 );
                 CREATE INDEX IF NOT EXISTS poi_hint_assets_lru
                     ON poi_hint_assets(last_accessed_at);
+                CREATE TABLE IF NOT EXISTS progress_sync_runs(
+                    sync_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    region_id TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    status TEXT NOT NULL,
+                    pull_count INTEGER NOT NULL DEFAULT 0,
+                    push_count INTEGER NOT NULL DEFAULT 0,
+                    unknown_count INTEGER NOT NULL DEFAULT 0,
+                    error_count INTEGER NOT NULL DEFAULT 0,
+                    summary_json TEXT NOT NULL DEFAULT '{}',
+                    FOREIGN KEY(region_id) REFERENCES regions(region_id)
+                );
+                CREATE TABLE IF NOT EXISTS remote_progress_unknown(
+                    region_id TEXT NOT NULL,
+                    point_id TEXT NOT NULL,
+                    first_seen_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    PRIMARY KEY(region_id, point_id),
+                    FOREIGN KEY(region_id) REFERENCES regions(region_id)
+                );
                 """
             )
+            progress_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(progress)")
+            }
+            if "remote_ignored" not in progress_columns:
+                connection.execute(
+                    "ALTER TABLE progress ADD COLUMN remote_ignored "
+                    "INTEGER NOT NULL DEFAULT 0 CHECK(remote_ignored IN (0, 1))"
+                )
+            if version in (1, 2):
+                connection.execute(
+                    "UPDATE progress SET sync_state = 'pending_push' "
+                    "WHERE collected = 1 AND sync_state = 'local'"
+                )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     def is_empty(self, region_id: str | None = None) -> bool:
@@ -367,6 +412,21 @@ class SqliteDataProvider:
             collected = int(connection.execute(
                 "SELECT COUNT(*) FROM progress WHERE collected = 1"
             ).fetchone()[0])
+            pending_sync = int(connection.execute(
+                "SELECT COUNT(*) FROM progress WHERE collected = 1 "
+                "AND sync_state IN ('local', 'pending_push', 'sync_error')"
+            ).fetchone()[0])
+            sync_errors = int(connection.execute(
+                "SELECT COUNT(*) FROM progress WHERE sync_state = 'sync_error'"
+            ).fetchone()[0])
+            remote_ignored = int(connection.execute(
+                "SELECT COUNT(*) FROM progress WHERE remote_ignored = 1"
+            ).fetchone()[0])
+            last_sync = connection.execute(
+                "SELECT completed_at, status, pull_count, push_count, unknown_count, "
+                "error_count FROM progress_sync_runs WHERE region_id = ? "
+                "ORDER BY sync_id DESC LIMIT 1", (region_id,)
+            ).fetchone()
             asset_rows = connection.execute(
                 "SELECT path FROM assets WHERE region_id = ?", (region_id,)
             ).fetchall()
@@ -405,6 +465,10 @@ class SqliteDataProvider:
             "inactive_poi_count": inactive,
             "space_count": int(snapshot["space_count"]) if snapshot else 0,
             "collected_count": collected,
+            "pending_sync_count": pending_sync,
+            "sync_error_count": sync_errors,
+            "remote_ignored_count": remote_ignored,
+            "last_progress_sync": dict(last_sync) if last_sync else None,
             "asset_count": len(asset_paths),
             "missing_asset_count": len(missing_assets),
             "missing_assets": missing_assets,
