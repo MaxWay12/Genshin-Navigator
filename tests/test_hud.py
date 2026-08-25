@@ -4,6 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
+from genshin_navigator.debug_view import DebugMapView
 from genshin_navigator.hud import (
     HudStateStore,
     WindowGeometry,
@@ -46,6 +49,13 @@ def navigation(*, available=True) -> NavigationSnapshot:
 
 
 class HudPresentationTests(unittest.TestCase):
+    def test_direction_arrow_renders_for_fresh_bearing(self) -> None:
+        canvas = np.zeros((150, 360, 3), dtype=np.uint8)
+
+        DebugMapView._draw_hud_arrow(canvas, 45.0, (85, 220, 110))
+
+        self.assertGreater(int(canvas.sum()), 0)
+
     def test_fresh_navigation_shows_distance_arrow_and_readable_layer(self) -> None:
         result = build_hud_presentation(
             tracker(), navigation(), {"floor78": "Великое озеро · B1"}

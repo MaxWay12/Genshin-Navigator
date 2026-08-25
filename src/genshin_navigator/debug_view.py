@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import time
-from math import radians, sin
+from math import cos, radians, sin
 from pathlib import Path
 
 import cv2
