@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Iterable
 
 from .poi import MapSpaceMetric, PoiCatalog, PoiProgress, PointOfInterest
-from .position import CoordinateSpace
 from .progress_backup import DatabaseBackupManager
+from .sqlite_poi import load_poi_catalog
+from .sqlite_progress import SqlitePoiProgress
 from .storage_schema import SCHEMA_VERSION, initialize_schema
 
 
@@ -33,63 +34,6 @@ class DataBundle:
     progress: PoiProgress | SqlitePoiProgress  # type: ignore[name-defined]
     backend: str
     provider: SqliteDataProvider | None = None  # type: ignore[name-defined]
-
-
-class SqlitePoiProgress:
-    def __init__(self, database: Path):
-        self.database = database
-        self.collected_ids = self._load()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database)
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
-
-    def _load(self) -> set[str]:
-        with closing(self._connect()) as connection, connection:
-            return {
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT poi_id FROM progress WHERE collected = 1"
-                )
-            }
-
-    def mark_collected(self, poi_id: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        with closing(self._connect()) as connection, connection:
-            connection.execute(
-                """
-                INSERT INTO progress(poi_id, collected, sync_state, updated_at)
-                VALUES (?, 1, 'pending_push', ?)
-                ON CONFLICT(poi_id) DO UPDATE SET
-                    collected = 1, sync_state = 'pending_push',
-                    updated_at = excluded.updated_at, remote_ignored = 0
-                """,
-                (poi_id, now),
-            )
-        self.collected_ids.add(poi_id)
-
-    def unmark_collected(self, poi_id: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        with closing(self._connect()) as connection, connection:
-            row = connection.execute(
-                "SELECT sync_state FROM progress WHERE poi_id = ?", (poi_id,)
-            ).fetchone()
-            remote_ignored = int(bool(row and str(row[0]) == "synced"))
-            connection.execute(
-                """
-                INSERT INTO progress(
-                    poi_id, collected, sync_state, updated_at, remote_ignored
-                )
-                VALUES (?, 0, 'local', ?, ?)
-                ON CONFLICT(poi_id) DO UPDATE SET
-                    collected = 0, sync_state = 'local',
-                    updated_at = excluded.updated_at,
-                    remote_ignored = excluded.remote_ignored
-                """,
-                (poi_id, now, remote_ignored),
-            )
-        self.collected_ids.discard(poi_id)
 
 
 class SqliteDataProvider:
@@ -137,41 +81,7 @@ class SqliteDataProvider:
             return int(connection.execute(query, params).fetchone()[0]) == 0
 
     def catalog(self, region_id: str = "fontaine") -> PoiCatalog:
-        with closing(self._connect()) as connection, connection:
-            poi_rows = connection.execute(
-                "SELECT * FROM pois WHERE region_id = ? AND active = 1 ORDER BY poi_id",
-                (region_id,),
-            ).fetchall()
-            metric_rows = connection.execute(
-                "SELECT * FROM map_spaces WHERE region_id = ? ORDER BY layer_id",
-                (region_id,),
-            ).fetchall()
-        pois = [
-            PointOfInterest(
-                id=str(row["poi_id"]), kind=str(row["kind"]), name=str(row["name"]),
-                region_id=str(row["region_id"]), layer_id=str(row["layer_id"]),
-                coordinate_space=CoordinateSpace(str(row["coordinate_space"])),
-                x=float(row["x"]), y=float(row["y"]),
-                label_id=int(row["label_id"]) if row["label_id"] is not None else None,
-                icon_url=str(row["icon_url"]) if row["icon_url"] else None,
-            )
-            for row in poi_rows
-        ]
-        metrics = []
-        for row in metric_rows:
-            matrix = json.loads(row["matrix_json"])
-            if matrix is None:
-                continue
-            metrics.append(
-                MapSpaceMetric.from_dict(
-                    {
-                        "region_id": row["region_id"], "layer_id": row["layer_id"],
-                        "coordinate_space": row["coordinate_space"],
-                        "local_to_world": matrix,
-                    }
-                )
-            )
-        return PoiCatalog(pois, metrics)
+        return load_poi_catalog(self.database, region_id)
 
     def progress(self) -> SqlitePoiProgress:
         return SqlitePoiProgress(self.database)
