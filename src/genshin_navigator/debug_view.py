@@ -83,6 +83,7 @@ class DebugMapView:
         self._hold_progress = 0.0
         self._toast = ""
         self._toast_until = 0.0
+        self._quit_requested = False
         self._active_layer_id = ""
         self._state_store = HudStateStore(hud_state_path)
         self._hotkeys = hotkey_manager
@@ -208,6 +209,10 @@ class DebugMapView:
         self._toast, self._toast_until = message, time.monotonic() + duration
 
     def _dispatch_action(self, action: HotkeyAction, navigation: NavigationSnapshot | None) -> None:
+        if action is HotkeyAction.QUIT:
+            self._hold.cancel()
+            self._quit_requested = True
+            return
         if action is HotkeyAction.TOGGLE_VIEW:
             self._hold.cancel()
             self._toggle_view()
@@ -281,7 +286,7 @@ class DebugMapView:
             visible = cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) >= 1
         except cv2.error:
             visible = False
-        return visible and key not in (27, ord("q"), ord("Q"))
+        return visible and not self._quit_requested and key not in (27, ord("q"), ord("Q"))
 
     def _render_hud(self, snapshot: TrackerSnapshot, navigation: NavigationSnapshot | None, paused_reason: str | None) -> np.ndarray:
         panel = np.full((self.hud_height, self.hud_width, 3), (24, 27, 31), np.uint8)
@@ -292,7 +297,7 @@ class DebugMapView:
         self._put_unicode_text(panel, presentation.distance, (16, 44), accent)
         self._put_unicode_text(panel, presentation.layer[:43], (16, 70), (190, 195, 200))
         self._put_unicode_text(panel, "ПАУЗА" if paused_reason else presentation.state, (16, 96), accent)
-        self._put_unicode_text(panel, "4/6 цель  2 skip  5 держать  8 undo  0 карта  . move", (16, self.hud_height - 23), (145, 150, 155))
+        self._put_unicode_text(panel, "4/6 цель  2 skip  5 держать  8 undo  0 карта  9 выход", (16, self.hud_height - 23), (145, 150, 155))
         if presentation.bearing_degrees is not None:
             self._draw_hud_arrow(panel, presentation.bearing_degrees, accent)
         if self._hold_progress > 0:
@@ -340,7 +345,7 @@ class DebugMapView:
 
     @staticmethod
     def _navigation_text(navigation: NavigationSnapshot | None, layer_poi_count: int) -> tuple[str, str]:
-        controls = "Num4/6 prev/next  Num2 skip  hold Num5 collected  Num8 undo  Num0 HUD/map"
+        controls = "Num4/6 prev/next  Num2 skip  hold Num5 collected  Num8 undo  Num0 HUD/map  Num9 quit"
         if navigation is None or navigation.target is None:
             return f"target=-  visible_pois={layer_poi_count}", controls
         distance = "frozen" if not navigation.available else "uncalibrated" if navigation.distance_m is None else f"≈{navigation.distance_m:.0f} м"

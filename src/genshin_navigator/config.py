@@ -131,6 +131,7 @@ class HotkeyConfig:
     undo: int = 0x68
     toggle_view: int = 0x60
     toggle_lock: int = 0x6E
+    quit: int = 0x69
 
     def __post_init__(self) -> None:
         values = tuple(self.__dict__.values())

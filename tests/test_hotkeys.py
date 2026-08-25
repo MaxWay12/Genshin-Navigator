@@ -39,7 +39,8 @@ class GlobalHotkeyTests(unittest.TestCase):
     def test_registered_action_is_queued_and_all_successes_are_released(self) -> None:
         api = FakeHotkeyApi()
         manager = GlobalHotkeyManager(
-            {HotkeyAction.NEXT: 0x66, HotkeyAction.UNDO: 0x68}, api=api
+            {HotkeyAction.NEXT: 0x66, HotkeyAction.UNDO: 0x68}, api=api,
+            physical_key_state=lambda _key: 0,
         )
         manager.start()
         api.messages.put(1)
@@ -55,7 +56,8 @@ class GlobalHotkeyTests(unittest.TestCase):
     def test_registration_conflict_does_not_disable_other_keys(self) -> None:
         api = FakeHotkeyApi({0x66})
         manager = GlobalHotkeyManager(
-            {HotkeyAction.NEXT: 0x66, HotkeyAction.UNDO: 0x68}, api=api
+            {HotkeyAction.NEXT: 0x66, HotkeyAction.UNDO: 0x68}, api=api,
+            physical_key_state=lambda _key: 0,
         )
         manager.start()
         self.assertEqual(manager.registration_errors, {HotkeyAction.NEXT: 0x66})
@@ -68,6 +70,29 @@ class GlobalHotkeyTests(unittest.TestCase):
         self.assertEqual(actions, [HotkeyAction.UNDO])
         manager.close()
         self.assertEqual(api.unregistered, [2])
+
+    def test_physical_fallback_works_without_window_focus_and_fires_once(self) -> None:
+        api = FakeHotkeyApi({0x66})
+        down = False
+
+        def key_state(virtual_key: int) -> int:
+            return 0x8000 if down and virtual_key == 0x66 else 0
+
+        manager = GlobalHotkeyManager(
+            {HotkeyAction.NEXT: 0x66}, api=api, physical_key_state=key_state
+        )
+        manager.start()
+        down = True
+        self.assertEqual(manager.poll(), [HotkeyAction.NEXT])
+        self.assertEqual(manager.poll(), [])
+        down = False
+        self.assertEqual(manager.poll(), [])
+        down = True
+        # The real UI loop runs at 10 Hz. Move outside the duplicate-suppression
+        # window before simulating a second deliberate press.
+        time.sleep(0.21)
+        self.assertEqual(manager.poll(), [HotkeyAction.NEXT])
+        manager.close()
 
 
 class CollectedHoldTests(unittest.TestCase):

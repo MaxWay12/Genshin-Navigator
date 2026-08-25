@@ -481,6 +481,7 @@ def main(argv: list[str] | None = None) -> int:
                     HotkeyAction.UNDO: config.navigation.hotkeys.undo,
                     HotkeyAction.TOGGLE_VIEW: config.navigation.hotkeys.toggle_view,
                     HotkeyAction.TOGGLE_LOCK: config.navigation.hotkeys.toggle_lock,
+                    HotkeyAction.QUIT: config.navigation.hotkeys.quit,
                 },
             )
             previous = time.perf_counter()

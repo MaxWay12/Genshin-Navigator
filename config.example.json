@@ -83,7 +83,8 @@
       "collected_hold": 101,
       "undo": 104,
       "toggle_view": 96,
-      "toggle_lock": 110
+      "toggle_lock": 110,
+      "quit": 105
     }
   }
 }

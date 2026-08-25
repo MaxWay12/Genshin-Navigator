@@ -126,6 +126,7 @@ Copy-Item config.example.json config.json
 - `Num8` — отменить последнее `skip` или `collected`;
 - `Num0` — компактный HUD / полная карта;
 - `NumDecimal` — разблокировать HUD для перетаскивания / закрепить и сохранить.
+- `Num9` — закрыть Navigator из игры.
 
 Закреплённый HUD остаётся поверх окон, не получает фокус и пропускает клики. Его
 положение хранится локально в `datasets/local/ui/hud_state.json`. Navigator

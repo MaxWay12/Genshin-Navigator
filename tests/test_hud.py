@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from genshin_navigator.debug_view import DebugMapView
+from genshin_navigator.hotkeys import CollectedHoldController, HotkeyAction
 from genshin_navigator.hud import (
     HudStateStore,
     WindowGeometry,
@@ -49,6 +50,15 @@ def navigation(*, available=True) -> NavigationSnapshot:
 
 
 class HudPresentationTests(unittest.TestCase):
+    def test_global_quit_requests_clean_window_shutdown(self) -> None:
+        view = object.__new__(DebugMapView)
+        view._quit_requested = False
+        view._hold = CollectedHoldController()
+
+        view._dispatch_action(HotkeyAction.QUIT, None)
+
+        self.assertTrue(view._quit_requested)
+
     def test_direction_arrow_renders_for_fresh_bearing(self) -> None:
         canvas = np.zeros((150, 360, 3), dtype=np.uint8)
 

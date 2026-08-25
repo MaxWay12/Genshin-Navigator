@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass
 from enum import Enum
 from time import monotonic
-from typing import Protocol
+from typing import Callable, Protocol
 
 
 class HotkeyAction(str, Enum):
@@ -18,6 +18,7 @@ class HotkeyAction(str, Enum):
     UNDO = "undo"
     TOGGLE_VIEW = "toggle_view"
     TOGGLE_LOCK = "toggle_lock"
+    QUIT = "quit"
 
 
 DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {
@@ -28,6 +29,7 @@ DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {
     HotkeyAction.UNDO: 0x68,  # VK_NUMPAD8
     HotkeyAction.TOGGLE_VIEW: 0x60,  # VK_NUMPAD0
     HotkeyAction.TOGGLE_LOCK: 0x6E,  # VK_DECIMAL
+    HotkeyAction.QUIT: 0x69,  # VK_NUMPAD9
 }
 
 
@@ -82,10 +84,11 @@ class GlobalHotkeyManager:
         hotkeys: dict[HotkeyAction, int] | None = None,
         *,
         api: HotkeyApi | None = None,
+        physical_key_state: Callable[[int], int] | None = None,
     ):
         self.hotkeys = dict(hotkeys or DEFAULT_HOTKEYS)
         self._api = api or WindowsHotkeyApi()
-        self._actions: queue.SimpleQueue[HotkeyAction] = queue.SimpleQueue()
+        self._actions: queue.SimpleQueue[tuple[HotkeyAction, float]] = queue.SimpleQueue()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
         self._thread_id: int | None = None
@@ -93,6 +96,11 @@ class GlobalHotkeyManager:
             index + 1: action for index, action in enumerate(self.hotkeys)
         }
         self.registration_errors: dict[HotkeyAction, int] = {}
+        self._physical_key_state = physical_key_state or (
+            lambda virtual_key: ctypes.windll.user32.GetAsyncKeyState(virtual_key)
+        )
+        self._physical_was_down = {action: False for action in self.hotkeys}
+        self._last_delivered: dict[HotkeyAction, float] = {}
 
     def start(self, timeout: float = 2.0) -> None:
         if self._thread is not None:
@@ -121,19 +129,33 @@ class GlobalHotkeyManager:
                     break
                 action = self._ids.get(hotkey_id)
                 if action is not None:
-                    self._actions.put(action)
+                    self._actions.put((action, monotonic()))
         finally:
             for hotkey_id in registered:
                 self._api.unregister(hotkey_id)
             self._ready.set()
 
     def poll(self) -> list[HotkeyAction]:
-        actions: list[HotkeyAction] = []
+        candidates: list[tuple[HotkeyAction, float]] = []
         while True:
             try:
-                actions.append(self._actions.get_nowait())
+                candidates.append(self._actions.get_nowait())
             except queue.Empty:
-                return actions
+                break
+        now = monotonic()
+        for action, virtual_key in self.hotkeys.items():
+            is_down = bool(self._physical_key_state(virtual_key) & 0x8000)
+            if is_down and not self._physical_was_down[action]:
+                candidates.append((action, now))
+            self._physical_was_down[action] = is_down
+        actions: list[HotkeyAction] = []
+        for action, timestamp in candidates:
+            last = self._last_delivered.get(action, float("-inf"))
+            if timestamp - last < 0.2:
+                continue
+            self._last_delivered[action] = timestamp
+            actions.append(action)
+        return actions
 
     def close(self) -> None:
         thread = self._thread
