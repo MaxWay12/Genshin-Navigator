@@ -6,28 +6,22 @@ import json
 import sqlite3
 import sys
 import time
-from datetime import timedelta
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from .calibration import CalibrationSession, load_calibration
+from .calibration import CalibrationSession
+from .application import LiveApplication, build_locator, load_runtime_data
 from .capture import crop_roi, grab_screen, load_image, save_screen
 from .config import AppConfig, load_config
-from .debug_view import DebugMapView
 from .data_store import (
     DataBundle,
     SqliteDataProvider,
     collect_assets,
-    open_data_bundle,
 )
 from .evaluation import evaluate_dataset
-from .failure_recorder import FailureRecorder
-from .hotkeys import HotkeyAction
-from .matcher import MinimapMatcher
-from .navigation import NavigationController
-from .pyramid import Locator, PyramidMatcher, load_pyramid
+from .pyramid import Locator, PyramidMatcher
 from .hoyolab_poi import (
     DEFAULT_LABEL_KINDS,
     build_catalog,
@@ -38,19 +32,12 @@ from .hoyolab_poi import (
 )
 from .hoyolab_auth import HoyoLabAuthSession
 from .position import CoordinateSpace, MapPosition, PositionState
-from .poi_guidance import (
-    HoyoLabPoiHintProvider,
-    PoiHintService,
-    SqlitePoiHintRepository,
-)
 from .progress_sync import (
     HoyoLabRemoteProgressProvider,
     ProgressSyncService,
     SqliteProgressSyncStore,
 )
-from .screen_gate import MinimapScreenGate
 from .scenario import evaluate_scenario, record_scenario
-from .tracker import LiveTracker
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -148,15 +135,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _runtime_data(config: AppConfig) -> DataBundle | None:
-    if not config.poi.enabled:
-        return None
-    return open_data_bundle(
-        backend=config.data.storage_backend,
-        database_path=config.data.database_path,
-        catalog_path=config.poi.catalog_path,
-        progress_path=config.poi.progress_path,
-        region_id=config.data.region_id,
-    )
+    return load_runtime_data(config)
 
 
 def _auth_session(config: AppConfig) -> HoyoLabAuthSession:
@@ -241,10 +220,7 @@ def _sync_data(config: AppConfig, region_id: str, map_version: str | None) -> di
 
 
 def _build_matcher(config: AppConfig) -> Locator:
-    if config.pyramid_path is not None:
-        return load_pyramid(config.pyramid_path, config.matcher)
-    assert config.map_path is not None
-    return MinimapMatcher(load_image(config.map_path), config.matcher)
+    return build_locator(config)
 
 
 def _locate_once(config: AppConfig, matcher: Locator, screenshot: str | None) -> dict[str, object]:
@@ -539,152 +515,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result["found"] else 2
 
         if args.command == "track":
-            if config.debug_map_path is None:
-                raise ValueError("track requires debug_map_path or map_path")
-            tracker = LiveTracker(config.tracker)
-            recorder = FailureRecorder(config.failure_recorder)
-            screen_gate = (
-                MinimapScreenGate.from_config(config.screen_gate)
-                if config.screen_gate.enabled
-                else None
-            )
-            layer_maps = None
-            layer_labels = None
-            if isinstance(matcher, PyramidMatcher):
-                layer_maps = {
-                    level.map_layer_id: level.matcher.reference_map  # type: ignore[attr-defined]
-                    for level in matcher.levels
-                    if level.map_layer_id != "surface"
-                    and hasattr(level.matcher, "reference_map")
-                }
-                layer_labels = matcher.layer_labels
-            data = _runtime_data(config)
-            poi_catalog = data.catalog if data is not None else None
-            poi_progress = data.progress if data is not None else None
-            navigation = (
-                NavigationController(
-                    poi_catalog,
-                    poi_progress,
-                    target_kinds=set(config.poi.target_kinds),
-                    calibration=load_calibration(config.navigation.calibration_path),
-                )
-                if poi_catalog is not None
-                and poi_progress is not None
-                and config.navigation.enabled
-                else None
-            )
-            hint_service = None
-            if config.poi_guidance.enabled and navigation is not None:
-                hint_repository = (
-                    SqlitePoiHintRepository(
-                        config.data.database_path, config.poi_guidance.cache_dir
-                    )
-                    if data is not None and data.backend == "sqlite"
-                    else None
-                )
-                hint_service = PoiHintService(
-                    HoyoLabPoiHintProvider(
-                        map_id=config.data.map_id,
-                        lang=config.data.lang,
-                        timeout_seconds=config.poi_guidance.request_timeout_seconds,
-                    ),
-                    hint_repository,
-                    refresh_after=timedelta(days=config.poi_guidance.refresh_after_days),
-                    negative_after=timedelta(hours=config.poi_guidance.negative_cache_hours),
-                    max_cache_bytes=round(config.poi_guidance.max_cache_mb * 1024 * 1024),
-                )
-            hotkey_virtual_keys = {
-                HotkeyAction.PREVIOUS: config.navigation.hotkeys.previous,
-                HotkeyAction.NEXT: config.navigation.hotkeys.next,
-                HotkeyAction.SKIP: config.navigation.hotkeys.skip,
-                HotkeyAction.COLLECTED_HOLD: config.navigation.hotkeys.collected_hold,
-                HotkeyAction.UNDO: config.navigation.hotkeys.undo,
-                HotkeyAction.TOGGLE_VIEW: config.navigation.hotkeys.toggle_view,
-                HotkeyAction.TOGGLE_LOCK: config.navigation.hotkeys.toggle_lock,
-                HotkeyAction.QUIT: config.navigation.hotkeys.quit,
-            }
-            if config.poi_guidance.enabled:
-                hotkey_virtual_keys.update({
-                    HotkeyAction.TOGGLE_DETAILS: config.poi_guidance.toggle_details,
-                    HotkeyAction.PREVIOUS_PAGE: config.poi_guidance.previous_page,
-                    HotkeyAction.NEXT_PAGE: config.poi_guidance.next_page,
-                })
-            view = DebugMapView(
-                load_image(config.debug_map_path),
-                layer_maps,
-                poi_catalog=poi_catalog,
-                poi_kinds=set(config.poi.kinds),
-                poi_target_kinds=set(config.poi.target_kinds),
-                poi_progress=poi_progress,
-                navigation=navigation,
-                layer_labels=layer_labels,
-                default_view=config.navigation.default_view,
-                hud_width=config.navigation.hud_width,
-                hud_height=config.navigation.hud_height,
-                hud_state_path=config.navigation.hud_state_path,
-                collected_hold_seconds=config.navigation.collected_hold_seconds,
-                global_hotkeys=config.navigation.global_hotkeys,
-                hotkey_virtual_keys=hotkey_virtual_keys,
-                hint_service=hint_service,
-            )
-            previous = time.perf_counter()
-            try:
-                while True:
-                    started = time.perf_counter()
-                    frame = grab_screen()
-                    minimap = crop_roi(frame, config.roi)
-                    gate_result = screen_gate.check(minimap) if screen_gate else None
-                    if gate_result is not None and not gate_result.minimap_present:
-                        now = time.perf_counter()
-                        reason = gate_result.reason or "minimap_not_visible"
-                        snapshot = tracker.pause(now, reason)
-                        elapsed = max(now - previous, 1e-6)
-                        previous = now
-                        if not view.show(snapshot, 1.0 / elapsed, paused_reason=reason):
-                            return 0
-                        remaining = config.interval_seconds - (time.perf_counter() - started)
-                        if remaining > 0:
-                            time.sleep(remaining)
-                        continue
-                    hint = tracker.position_hint
-                    localization = (
-                        matcher.locate_near(minimap, hint, config.local_search)
-                        if (
-                            config.local_search.enabled
-                            and hint is not None
-                            and isinstance(matcher, PyramidMatcher)
-                        )
-                        else matcher.locate(minimap)
-                    )
-                    # A featureless frame (most often open water) must not trigger
-                    # an immediate scan of every surface and underground level.
-                    # Keep retrying the active layer until the tracker genuinely
-                    # expires; the following iteration will then have no hint and
-                    # perform one global reacquisition.
-                    now = time.perf_counter()
-                    snapshot = tracker.update(localization, now)
-                    recorder_was_active = recorder.active
-                    incident = recorder.observe(minimap, localization, snapshot, now)
-                    if recorder.active and not recorder_was_active:
-                        print(
-                            "tracking interruption; collecting minimap diagnostics...",
-                            flush=True,
-                        )
-                    if incident is not None:
-                        print(f"failure incident saved: {incident}", flush=True)
-                    elapsed = max(now - previous, 1e-6)
-                    previous = now
-                    if not view.show(snapshot, 1.0 / elapsed):
-                        return 0
-                    remaining = config.interval_seconds - (time.perf_counter() - started)
-                    if remaining > 0:
-                        time.sleep(remaining)
-            finally:
-                incident = recorder.close()
-                if incident is not None:
-                    print(f"partial failure incident saved: {incident}", flush=True)
-                view.close()
-
+            return LiveApplication(config, matcher).run()
         while True:
             result = _locate_once(config, matcher, None)
             print(json.dumps(result, ensure_ascii=False), flush=True)
