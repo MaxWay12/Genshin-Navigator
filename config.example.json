@@ -99,5 +99,12 @@
       "previous_page": 97,
       "next_page": 99
     }
+  },
+  "progress_sync": {
+    "enabled": true,
+    "auth_profile_dir": "datasets/local/auth/hoyolab_webview",
+    "request_timeout_seconds": 8,
+    "retry_count": 1,
+    "min_write_interval_seconds": 0.15
   }
 }

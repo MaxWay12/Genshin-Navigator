@@ -210,6 +210,25 @@ class DataConfig:
 
 
 @dataclass(frozen=True)
+class ProgressSyncConfig:
+    enabled: bool = True
+    auth_profile_dir: Path = Path("datasets/local/auth/hoyolab_webview")
+    request_timeout_seconds: float = 8.0
+    retry_count: int = 1
+    min_write_interval_seconds: float = 0.15
+
+    def __post_init__(self) -> None:
+        if self.request_timeout_seconds <= 0:
+            raise ValueError("progress_sync.request_timeout_seconds must be positive")
+        if self.retry_count < 0:
+            raise ValueError("progress_sync.retry_count must be non-negative")
+        if self.min_write_interval_seconds < 0.15:
+            raise ValueError(
+                "progress_sync.min_write_interval_seconds must be at least 0.15"
+            )
+
+
+@dataclass(frozen=True)
 class AppConfig:
     map_path: Path | None
     pyramid_path: Path | None
@@ -225,6 +244,7 @@ class AppConfig:
     navigation: NavigationConfig = field(default_factory=NavigationConfig)
     poi_guidance: PoiGuidanceConfig = field(default_factory=PoiGuidanceConfig)
     data: DataConfig = field(default_factory=DataConfig)
+    progress_sync: ProgressSyncConfig = field(default_factory=ProgressSyncConfig)
 
     def __post_init__(self) -> None:
         if (
@@ -325,6 +345,12 @@ def load_config(path: str | Path) -> AppConfig:
             "datasets/local/references/hoyolab_fontaine_underground/metadata.json",
         )
     )
+    progress_sync_raw = dict(raw.get("progress_sync", {}))
+    auth_profile_value = progress_sync_raw.pop(
+        "auth_profile_dir", "datasets/local/auth/hoyolab_webview"
+    )
+    auth_profile_dir = resolve_optional(auth_profile_value)
+    assert auth_profile_dir is not None
 
     return AppConfig(
         map_path=map_path,
@@ -366,5 +392,9 @@ def load_config(path: str | Path) -> AppConfig:
             surface_metadata_path=surface_metadata_path,
             underground_metadata_path=underground_metadata_path,
             **data_raw,
+        ),
+        progress_sync=ProgressSyncConfig(
+            auth_profile_dir=auth_profile_dir,
+            **progress_sync_raw,
         ),
     )
