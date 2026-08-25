@@ -61,8 +61,10 @@ class HudPresentationTests(unittest.TestCase):
             )
 
         view = object.__new__(DebugMapView)
-        view.details_width = 560
-        view.details_height = 500
+        view.hud_width = 360
+        view.hud_height = 150
+        view.details_width = 360
+        view.details_height = 650
         view._layer_labels = {"floor78": "Великое озеро · B1"}
         view._hint_service = HintService()
         view._hint_image_path = None
@@ -72,10 +74,11 @@ class HudPresentationTests(unittest.TestCase):
         view._unicode_font = ImageFont.truetype(str(font_path), 15)
         view._unicode_font_large = ImageFont.truetype(str(font_path), 19)
         view._toast_until = 0.0
+        view._hold_progress = 0.0
 
         panel = view._render_details_hud(tracker(), navigation(), None)
 
-        self.assertEqual(panel.shape, (500, 560, 3))
+        self.assertEqual(panel.shape, (650, 360, 3))
         self.assertGreater(int(panel.sum()), 0)
 
     def test_details_toggle_and_page_keys_preserve_single_window_mode(self) -> None:

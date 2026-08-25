@@ -63,8 +63,8 @@ class DebugMapView:
         hotkey_virtual_keys: dict[HotkeyAction, int] | None = None,
         hotkey_manager: GlobalHotkeyManager | None = None,
         hint_service: PoiHintService | None = None,
-        details_width: int = 560,
-        details_height: int = 500,
+        details_width: int | None = None,
+        details_height: int = 650,
     ):
         if atlas is None or atlas.size == 0:
             raise ValueError("Debug atlas is empty")
@@ -73,7 +73,7 @@ class DebugMapView:
         self.max_height = max_height
         self.hud_width = hud_width
         self.hud_height = hud_height
-        self.details_width = details_width
+        self.details_width = details_width or hud_width
         self.details_height = details_height
         self._mode = default_view
         self._details_open = False
@@ -395,16 +395,18 @@ class DebugMapView:
         navigation: NavigationSnapshot | None,
         paused_reason: str | None,
     ) -> np.ndarray:
-        panel = np.full((self.details_height, self.details_width, 3), (24, 27, 31), np.uint8)
-        presentation = build_hud_presentation(snapshot, navigation, self._layer_labels)
-        accent = (85, 220, 110) if presentation.available and not paused_reason else (145, 145, 145)
-        cv2.rectangle(panel, (0, 0), (5, self.details_height), accent, -1)
-        self._put_unicode_text(panel, presentation.target[:58], (16, 10), (238, 238, 238), large=True)
-        self._put_unicode_text(panel, f"{presentation.distance} · {presentation.layer}"[:70], (16, 42), accent)
+        panel = np.full(
+            (self.details_height, self.details_width, 3), (24, 27, 31), np.uint8
+        )
+        compact = self._render_hud(snapshot, navigation, paused_reason)
+        header_width = min(self.details_width, compact.shape[1])
+        header_height = min(self.hud_height, compact.shape[0])
+        panel[:header_height, :header_width] = compact[:header_height, :header_width]
         hint = self._hint_service.snapshot if self._hint_service is not None else PoiHintSnapshot(None, HintState.UNAVAILABLE)
-        self._put_unicode_text(panel, hint.message or hint.state.value, (16, 69), (190, 195, 200))
-
-        image_x, image_y, image_w, image_h = 16, 103, 224, 310
+        image_x = 8
+        image_y = self.hud_height + 8
+        image_w = self.details_width - 16
+        image_h = min(245, max(150, round(image_w * 0.68)))
         image = None
         if hint.image_path is not None:
             if hint.image_path != self._hint_image_path:
@@ -413,23 +415,44 @@ class DebugMapView:
             image = self._hint_image
         if image is not None and image.size:
             height, width = image.shape[:2]
-            scale = min(image_w / width, image_h / height, 1.0)
-            resized = cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
-            y2, x2 = image_y + resized.shape[0], image_x + resized.shape[1]
-            panel[image_y:y2, image_x:x2] = resized
-            text_x, line_width = 258, 35
+            scale = min(image_w / width, image_h / height)
+            interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
+            resized = cv2.resize(
+                image,
+                (max(1, round(width * scale)), max(1, round(height * scale))),
+                interpolation=interpolation,
+            )
+            draw_x = image_x + (image_w - resized.shape[1]) // 2
+            draw_y = image_y + (image_h - resized.shape[0]) // 2
+            y2, x2 = draw_y + resized.shape[0], draw_x + resized.shape[1]
+            panel[draw_y:y2, draw_x:x2] = resized
         else:
-            cv2.rectangle(panel, (image_x, image_y), (image_x + image_w, image_y + 120), (52, 56, 62), 1)
-            self._put_unicode_text(panel, "Изображения нет", (image_x + 43, image_y + 48), (145, 150, 155))
-            text_x, line_width = 258, 35
+            cv2.rectangle(
+                panel, (image_x, image_y),
+                (image_x + image_w, image_y + image_h), (52, 56, 62), 1,
+            )
+            self._put_unicode_text(
+                panel, "Изображения нет",
+                (image_x + max(15, (image_w - 120) // 2), image_y + image_h // 2 - 8),
+                (145, 150, 155),
+            )
 
+        text_x = 14
+        text_y = image_y + image_h + 34
+        line_width = max(28, (self.details_width - 28) // 8)
+        self._put_unicode_text(
+            panel, hint.message or hint.state.value,
+            (text_x, image_y + image_h + 7), (175, 180, 185),
+        )
         lines = self._hint_lines(hint, line_width)
-        per_page = max(1, (self.details_height - 135) // 22)
+        per_page = max(1, (self.details_height - text_y - 35) // 22)
         pages = max(1, (len(lines) + per_page - 1) // per_page)
         self._details_page = min(self._details_page, pages - 1)
         shown = lines[self._details_page * per_page:(self._details_page + 1) * per_page]
         for index, line in enumerate(shown):
-            self._put_unicode_text(panel, line, (text_x, 103 + index * 22), (220, 222, 224))
+            self._put_unicode_text(
+                panel, line, (text_x, text_y + index * 22), (220, 222, 224)
+            )
         footer = f"Num1/3 страница {self._details_page + 1}/{pages}  Num7 закрыть  Num4/6 цель  Num9 выход"
         self._put_unicode_text(panel, footer, (16, self.details_height - 25), (145, 150, 155))
         if time.monotonic() < self._toast_until:
