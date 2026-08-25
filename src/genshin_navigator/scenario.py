@@ -130,6 +130,7 @@ def record_scenario(
     capture_screen: Callable[[], np.ndarray] = grab_screen,
     clock: Callable[[], float] = time.perf_counter,
     sleeper: Callable[[float], None] = time.sleep,
+    phase_notifier: Callable[[str], None] | None = None,
 ) -> Path:
     if duration_seconds <= 0:
         raise ValueError("Scenario duration must be positive")
@@ -147,13 +148,23 @@ def record_scenario(
         else None
     )
     started = clock()
+    if phase_notifier is not None:
+        phase_notifier("started")
     next_capture = started
     frames: list[dict[str, object]] = []
+    stationary_notified = stationary_last_seconds <= 0
     while True:
         now = clock()
         elapsed = now - started
         if frames and elapsed > duration_seconds:
             break
+        if (
+            not stationary_notified
+            and elapsed >= duration_seconds - stationary_last_seconds
+        ):
+            stationary_notified = True
+            if phase_notifier is not None:
+                phase_notifier("stationary")
         minimap = crop_roi(capture_screen(), config.roi)
         gate = (
             screen_gate.check(minimap)
@@ -177,6 +188,8 @@ def record_scenario(
         remaining = next_capture - clock()
         if remaining > 0:
             sleeper(remaining)
+    if phase_notifier is not None:
+        phase_notifier("finished")
     manifest = {
         "format_version": SCENARIO_FORMAT_VERSION,
         "name": name,

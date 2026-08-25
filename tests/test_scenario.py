@@ -89,6 +89,7 @@ class ScenarioTests(unittest.TestCase):
         clock = FakeClock()
         desktop = np.zeros((12, 12, 3), dtype=np.uint8)
         desktop[3:7, 2:6] = 123
+        phases: list[str] = []
         with tempfile.TemporaryDirectory() as temporary:
             manifest_path = record_scenario(
                 app_config(),
@@ -101,6 +102,7 @@ class ScenarioTests(unittest.TestCase):
                 capture_screen=lambda: desktop.copy(),
                 clock=clock,
                 sleeper=clock.sleep,
+                phase_notifier=phases.append,
             )
             root, manifest = load_scenario(manifest_path.parent)
 
@@ -112,6 +114,7 @@ class ScenarioTests(unittest.TestCase):
             saved = cv2.imread(str(root / manifest["frames"][0]["image"]))
             self.assertEqual(saved.shape[:2], (4, 4))
             self.assertEqual(len(list(root.rglob("*.png"))), 3)
+            self.assertEqual(phases, ["started", "stationary", "finished"])
 
     def test_loader_rejects_non_monotonic_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

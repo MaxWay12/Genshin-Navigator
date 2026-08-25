@@ -174,6 +174,27 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _recording_phase_signal(phase: str) -> None:
+    messages = {
+        "started": "Recording started.",
+        "stationary": "Stationary phase: stop moving now.",
+        "finished": "Recording finished.",
+    }
+    print(messages[phase], flush=True)
+    try:
+        import winsound
+
+        patterns = {
+            "started": [(900, 180)],
+            "stationary": [(500, 220), (500, 220)],
+            "finished": [(1000, 130), (1200, 130), (1400, 180)],
+        }
+        for frequency, duration in patterns[phase]:
+            winsound.Beep(frequency, duration)
+    except (ImportError, RuntimeError, OSError):
+        pass
+
+
 def _runtime_data(config: AppConfig) -> DataBundle | None:
     return load_runtime_data(config)
 
@@ -568,6 +589,7 @@ def main(argv: list[str] | None = None) -> int:
                 stationary_last_seconds=args.stationary_last_seconds,
                 genshin_ui_scale=args.ui_scale,
                 graphics_preset=args.graphics_preset,
+                phase_notifier=_recording_phase_signal,
             )
             print(manifest)
             return 0
