@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from threading import Thread
 from http.cookies import SimpleCookie
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -49,6 +50,14 @@ class FakeWebview:
         func()
 
 
+class ReturningWebview(FakeWebview):
+    def start(self, func, **kwargs):
+        self.starts.append(kwargs)
+        worker = Thread(target=func)
+        self.worker = worker
+        worker.start()
+
+
 class HoyoLabAuthTests(unittest.TestCase):
     def test_cookie_parser_handles_simple_cookie_without_logging_secrets(self):
         cookies = SimpleCookie()
@@ -72,6 +81,18 @@ class HoyoLabAuthTests(unittest.TestCase):
             self.assertEqual(
                 Path(webview.starts[0]["storage_path"]), session.profile_dir
             )
+
+    def test_login_stops_cookie_monitor_when_webview_returns(self):
+        with TemporaryDirectory() as temporary:
+            webview = ReturningWebview({"ltoken_v2": "secret"})
+            session = HoyoLabAuthSession(
+                Path(temporary) / "profile", poll_seconds=30,
+                webview_module=webview,
+            )
+
+            self.assertTrue(session.login())
+            webview.worker.join(timeout=0.5)
+            self.assertFalse(webview.worker.is_alive())
 
     def test_cookie_read_and_logout_use_only_isolated_profile(self):
         with TemporaryDirectory() as temporary:

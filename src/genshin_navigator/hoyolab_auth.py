@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import threading
 import time
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -90,6 +91,7 @@ class HoyoLabAuthSession:
         webview = self._webview()
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         authenticated = False
+        stop_monitor = threading.Event()
         window = webview.create_window(
             "Genshin Navigator — вход HoYoLAB",
             self.map_url,
@@ -100,14 +102,19 @@ class HoyoLabAuthSession:
 
         def monitor() -> None:
             nonlocal authenticated
-            while True:
+            while not stop_monitor.is_set():
                 try:
                     if has_auth_cookie(window.get_cookies()):
                         authenticated = True
                         window.title = "HoYoLAB подключён — закройте это окно"
-                    time.sleep(self.poll_seconds)
                 except Exception:
                     return
+                stop_monitor.wait(self.poll_seconds)
+
+        events = getattr(window, "events", None)
+        closed_event = getattr(events, "closed", None)
+        if closed_event is not None:
+            closed_event += lambda *_: stop_monitor.set()
 
         try:
             webview.start(
@@ -121,6 +128,12 @@ class HoyoLabAuthSession:
                 "Edge WebView2 could not start. Install the official runtime: "
                 f"{WEBVIEW2_RUNTIME_URL}"
             ) from error
+        finally:
+            # pywebview runs the startup callback in a non-daemon thread. Some
+            # WebView2 versions keep returning cached cookies after the window
+            # has closed, so relying on get_cookies() to raise leaves the CLI
+            # process alive forever.
+            stop_monitor.set()
         return authenticated
 
     def cookie_header(self) -> str:
