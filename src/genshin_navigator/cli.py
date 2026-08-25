@@ -37,6 +37,7 @@ from .progress_sync import (
     ProgressSyncService,
     SqliteProgressSyncStore,
 )
+from .progress_backup import ProgressTransferService
 from .scenario import evaluate_scenario, record_scenario
 
 
@@ -131,6 +132,21 @@ def _parser() -> argparse.ArgumentParser:
     progress_sync.add_argument(
         "--yes", action="store_true", help="Apply the preview without prompting"
     )
+    progress_export = subparsers.add_parser(
+        "progress-export", help="Atomically export portable local progress"
+    )
+    progress_export.add_argument("output")
+    progress_export.add_argument("--config", default="config.json")
+    progress_export.add_argument("--region", default=None)
+
+    progress_import = subparsers.add_parser(
+        "progress-import", help="Preview and import portable local progress"
+    )
+    progress_import.add_argument("source")
+    progress_import.add_argument("--config", default="config.json")
+    progress_import.add_argument("--region", default=None)
+    progress_import.add_argument("--replace", action="store_true")
+    progress_import.add_argument("--yes", action="store_true")
     return parser
 
 
@@ -197,7 +213,11 @@ def _sync_data(config: AppConfig, region_id: str, map_version: str | None) -> di
         labels, points, explicit_version=requested_version,
         asset_revision=str(surface.get("revision") or "") or None,
     )
-    provider = SqliteDataProvider(config.data.database_path)
+    provider = SqliteDataProvider(
+        config.data.database_path,
+        backup_dir=config.data.backup_dir,
+        backup_retention=config.data.backup_retention,
+    )
     if provider.is_empty(region_id) and config.poi.catalog_path is not None and config.poi.catalog_path.exists():
         provider.import_legacy(
             config.poi.catalog_path, config.poi.progress_path, region_id=region_id
@@ -453,6 +473,36 @@ def main(argv: list[str] | None = None) -> int:
             result = service.apply(plan)
             print(json.dumps({"result": result.to_dict()}, ensure_ascii=False, indent=2))
             return 0 if not result.failed_push_ids else 2
+        if args.command in {"progress-export", "progress-import"}:
+            if config.data.storage_backend == "json":
+                raise ValueError(f"{args.command} requires the SQLite data backend")
+            region_id = args.region or config.data.region_id
+            data = _runtime_data(config)
+            if data is None or data.provider is None:
+                raise ValueError("Progress transfer requires an initialized SQLite store")
+            transfer = ProgressTransferService(
+                config.data.database_path,
+                backup_dir=config.data.backup_dir,
+                backup_retention=config.data.backup_retention,
+            )
+            if args.command == "progress-export":
+                print(transfer.export(args.output, region_id))
+                return 0
+            plan = transfer.preview_import(
+                args.source, region_id, replace=args.replace
+            )
+            print(json.dumps({"preview": plan.to_dict()}, ensure_ascii=False, indent=2))
+            if not args.yes:
+                try:
+                    answer = input("Apply this progress import? [y/N] ").strip().lower()
+                except EOFError:
+                    answer = ""
+                if answer not in {"y", "yes", "д", "да"}:
+                    print("Progress import cancelled; no changes were made.")
+                    return 0
+            transfer.apply_import(plan)
+            print(json.dumps({"result": "success", **plan.to_dict()}, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "sync-data":
             region_id = args.region or config.data.region_id
             print(json.dumps(

@@ -190,6 +190,8 @@ class PoiGuidanceConfig:
 class DataConfig:
     storage_backend: str = "auto"
     database_path: Path = Path("datasets/local/data/genshin_navigator.db")
+    backup_dir: Path = Path("datasets/local/backups")
+    backup_retention: int = 5
     region_id: str = "fontaine"
     surface_metadata_path: Path | None = Path(
         "datasets/local/references/hoyolab_fontaine_full_n1/metadata.json"
@@ -207,6 +209,8 @@ class DataConfig:
             raise ValueError("data.storage_backend must be auto, sqlite, or json")
         if self.map_id < 1 or self.area_id < 1:
             raise ValueError("data map_id and area_id must be positive")
+        if self.backup_retention < 1:
+            raise ValueError("data.backup_retention must be positive")
 
 
 @dataclass(frozen=True)
@@ -333,6 +337,10 @@ def load_config(path: str | Path) -> AppConfig:
     )
     database_path = resolve_optional(database_value)
     assert database_path is not None
+    backup_dir = resolve_optional(
+        data_raw.pop("backup_dir", "datasets/local/backups")
+    )
+    assert backup_dir is not None
     surface_metadata_path = resolve_optional(
         data_raw.pop(
             "surface_metadata_path",
@@ -389,6 +397,7 @@ def load_config(path: str | Path) -> AppConfig:
         ),
         data=DataConfig(
             database_path=database_path,
+            backup_dir=backup_dir,
             surface_metadata_path=surface_metadata_path,
             underground_metadata_path=underground_metadata_path,
             **data_raw,

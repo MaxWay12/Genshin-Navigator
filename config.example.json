@@ -60,6 +60,8 @@
   "data": {
     "storage_backend": "auto",
     "database_path": "datasets/local/data/genshin_navigator.db",
+    "backup_dir": "datasets/local/backups",
+    "backup_retention": 5,
     "region_id": "fontaine",
     "surface_metadata_path": "datasets/local/references/hoyolab_fontaine_full_n1/metadata.json",
     "underground_metadata_path": "datasets/local/references/hoyolab_fontaine_underground/metadata.json",

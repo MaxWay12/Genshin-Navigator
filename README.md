@@ -123,6 +123,23 @@ Copy-Item config.example.json config.json
 .venv\Scripts\genshin-navigator hoyolab-logout --config config.json
 ```
 
+### Резервная копия и перенос прогресса
+
+Перед изменением схемы SQLite Navigator создаёт консистентную резервную копию в
+`datasets/local/backups` и хранит пять последних копий. Переносимый JSON содержит
+только collected-отметки и локальные исключения HoYoLAB — без cookies, подсказок и
+изображений:
+
+```powershell
+.venv\Scripts\genshin-navigator progress-export artifacts/fontaine-progress.json --config config.json
+.venv\Scripts\genshin-navigator progress-import artifacts/fontaine-progress.json --config config.json
+```
+
+Обычный import сначала показывает preview и безопасно объединяет данные. Флаг
+`--replace` заменяет только прогресс выбранного региона и перед применением создаёт
+дополнительную резервную копию. Неизвестные POI перечисляются в preview и не
+добавляются в базу.
+
 1. Поместите цельное изображение карты в `assets/world_map.png`. Оно должно быть
    того же визуального стиля и масштаба, что и содержимое миникарты.
 2. Сохраните тестовый снимок рабочего стола:

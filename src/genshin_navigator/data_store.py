@@ -11,6 +11,7 @@ from typing import Iterable
 
 from .poi import MapSpaceMetric, PoiCatalog, PoiProgress, PointOfInterest
 from .position import CoordinateSpace
+from .progress_backup import DatabaseBackupManager
 from .storage_schema import SCHEMA_VERSION, initialize_schema
 
 
@@ -94,9 +95,26 @@ class SqlitePoiProgress:
 class SqliteDataProvider:
     """Offline-first normalized data store. Network access never happens here."""
 
-    def __init__(self, database: str | Path):
+    def __init__(
+        self,
+        database: str | Path,
+        *,
+        backup_dir: str | Path | None = None,
+        backup_retention: int = 5,
+    ):
         self.database = Path(database)
         self.database.parent.mkdir(parents=True, exist_ok=True)
+        if self.database.exists() and self.database.stat().st_size:
+            with closing(sqlite3.connect(self.database)) as connection:
+                previous_version = int(
+                    connection.execute("PRAGMA user_version").fetchone()[0]
+                )
+            if 0 < previous_version < SCHEMA_VERSION:
+                DatabaseBackupManager(
+                    self.database,
+                    backup_dir or self.database.parent / "backups",
+                    backup_retention,
+                ).create(f"before_schema_v{previous_version}_to_v{SCHEMA_VERSION}")
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -364,6 +382,8 @@ def open_data_bundle(
     catalog_path: str | Path | None,
     progress_path: str | Path,
     region_id: str = "fontaine",
+    backup_dir: str | Path | None = None,
+    backup_retention: int = 5,
 ) -> DataBundle:
     """Open runtime data without performing network I/O."""
     if backend == "json":
@@ -372,7 +392,11 @@ def open_data_bundle(
         return DataBundle(
             PoiCatalog.load(catalog_path), PoiProgress.load(progress_path), "json"
         )
-    provider = SqliteDataProvider(database_path)
+    provider = SqliteDataProvider(
+        database_path,
+        backup_dir=backup_dir,
+        backup_retention=backup_retention,
+    )
     if provider.is_empty(region_id):
         if backend == "sqlite":
             raise ValueError(

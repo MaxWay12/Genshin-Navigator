@@ -35,6 +35,8 @@ def load_runtime_data(config: AppConfig) -> DataBundle | None:
         catalog_path=config.poi.catalog_path,
         progress_path=config.poi.progress_path,
         region_id=config.data.region_id,
+        backup_dir=config.data.backup_dir,
+        backup_retention=config.data.backup_retention,
     )
 
 
