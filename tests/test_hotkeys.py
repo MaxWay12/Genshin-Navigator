@@ -83,14 +83,44 @@ class GlobalHotkeyTests(unittest.TestCase):
         )
         manager.start()
         down = True
-        self.assertEqual(manager.poll(), [HotkeyAction.NEXT])
+        for _ in range(100):
+            actions = manager.poll()
+            if actions:
+                break
+            time.sleep(0.002)
+        self.assertEqual(actions, [HotkeyAction.NEXT])
         self.assertEqual(manager.poll(), [])
         down = False
+        time.sleep(0.02)
         self.assertEqual(manager.poll(), [])
-        down = True
         # The real UI loop runs at 10 Hz. Move outside the duplicate-suppression
         # window before simulating a second deliberate press.
         time.sleep(0.21)
+        down = True
+        for _ in range(100):
+            actions = manager.poll()
+            if actions:
+                break
+            time.sleep(0.002)
+        self.assertEqual(actions, [HotkeyAction.NEXT])
+        manager.close()
+
+    def test_short_press_is_captured_between_slow_ui_polls(self) -> None:
+        api = FakeHotkeyApi({0x66})
+        down = False
+
+        def key_state(_virtual_key: int) -> int:
+            return 0x8000 if down else 0
+
+        manager = GlobalHotkeyManager(
+            {HotkeyAction.NEXT: 0x66}, api=api, physical_key_state=key_state
+        )
+        manager.start()
+        down = True
+        time.sleep(0.03)
+        down = False
+        time.sleep(0.03)
+
         self.assertEqual(manager.poll(), [HotkeyAction.NEXT])
         manager.close()
 

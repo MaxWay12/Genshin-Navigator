@@ -4,6 +4,7 @@ import ctypes
 from ctypes import wintypes
 import queue
 import threading
+import time
 from dataclasses import dataclass
 from enum import Enum
 from time import monotonic
@@ -91,7 +92,9 @@ class GlobalHotkeyManager:
         self._actions: queue.SimpleQueue[tuple[HotkeyAction, float]] = queue.SimpleQueue()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
+        self._physical_thread: threading.Thread | None = None
         self._thread_id: int | None = None
+        self._stop_physical = threading.Event()
         self._ids = {
             index + 1: action for index, action in enumerate(self.hotkeys)
         }
@@ -105,12 +108,30 @@ class GlobalHotkeyManager:
     def start(self, timeout: float = 2.0) -> None:
         if self._thread is not None:
             return
+        self._stop_physical.clear()
         self._thread = threading.Thread(
             target=self._run, name="navigator-hotkeys", daemon=True
         )
         self._thread.start()
         if not self._ready.wait(timeout):
             raise RuntimeError("Global hotkey thread did not start")
+        self._physical_thread = threading.Thread(
+            target=self._run_physical,
+            name="navigator-physical-keys",
+            daemon=True,
+        )
+        self._physical_thread.start()
+
+    def _run_physical(self) -> None:
+        """Sample key edges independently from the potentially slow CV loop."""
+        while not self._stop_physical.is_set():
+            now = monotonic()
+            for action, virtual_key in self.hotkeys.items():
+                is_down = bool(self._physical_key_state(virtual_key) & 0x8000)
+                if is_down and not self._physical_was_down[action]:
+                    self._actions.put((action, now))
+                self._physical_was_down[action] = is_down
+            time.sleep(0.01)
 
     def _run(self) -> None:
         self._thread_id = self._api.current_thread_id()
@@ -142,12 +163,6 @@ class GlobalHotkeyManager:
                 candidates.append(self._actions.get_nowait())
             except queue.Empty:
                 break
-        now = monotonic()
-        for action, virtual_key in self.hotkeys.items():
-            is_down = bool(self._physical_key_state(virtual_key) & 0x8000)
-            if is_down and not self._physical_was_down[action]:
-                candidates.append((action, now))
-            self._physical_was_down[action] = is_down
         actions: list[HotkeyAction] = []
         for action, timestamp in candidates:
             last = self._last_delivered.get(action, float("-inf"))
@@ -161,10 +176,15 @@ class GlobalHotkeyManager:
         thread = self._thread
         if thread is None:
             return
+        self._stop_physical.set()
+        physical_thread = self._physical_thread
+        if physical_thread is not None:
+            physical_thread.join(timeout=1.0)
         if self._thread_id is not None and thread.is_alive():
             self._api.post_quit(self._thread_id)
         thread.join(timeout=2.0)
         self._thread = None
+        self._physical_thread = None
 
 
 @dataclass(frozen=True)
