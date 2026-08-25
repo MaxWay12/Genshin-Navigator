@@ -30,6 +30,17 @@ class LocalStubMatcher(StubMatcher):
 
 
 class PyramidMatcherTests(unittest.TestCase):
+    def test_surface_label_uses_matcher_region(self) -> None:
+        level = PyramidLevel(
+            id="sumeru_desert_surface_n1",
+            matcher=StubMatcher(None),
+            local_to_canonical=np.eye(3),
+        )
+        matcher = PyramidMatcher(
+            (100, 100), [level], region_id="sumeru_desert"
+        )
+        self.assertEqual(matcher.layer_labels["surface"], "Сумеру · Пустыня · Поверхность")
+
     def test_exposes_readable_layer_name_and_floor_label(self) -> None:
         level = PyramidLevel(
             id="floor78", matcher=StubMatcher(LocateResult(found=False)),

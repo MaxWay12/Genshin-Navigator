@@ -15,6 +15,13 @@ from .matcher import CandidateMatch, LocateResult, MinimapMatcher, UndergroundMi
 from .position import CoordinateSpace, MapPosition
 
 
+REGION_DISPLAY_NAMES = {
+    "fontaine": "Фонтейн",
+    "sumeru": "Сумеру",
+    "sumeru_desert": "Сумеру · Пустыня",
+}
+
+
 class Locator(Protocol):
     def locate(self, minimap: np.ndarray) -> LocateResult: ...
 
@@ -46,9 +53,7 @@ class PyramidLevel:
     def layer_display_name(self) -> str:
         parts = [part for part in (self.display_name, self.floor_label) if part]
         return " · ".join(parts) if parts else (
-            "Фонтейн · Поверхность"
-            if self.map_layer_id == "surface"
-            else self.map_layer_id
+            "Поверхность" if self.map_layer_id == "surface" else self.map_layer_id
         )
 
 
@@ -76,7 +81,12 @@ class PyramidMatcher:
 
     @property
     def layer_labels(self) -> dict[str, str]:
-        labels: dict[str, str] = {"surface": "Фонтейн · Поверхность"}
+        region_label = REGION_DISPLAY_NAMES.get(
+            self.region_id, self.region_id.replace("_", " ").title()
+        )
+        labels: dict[str, str] = {
+            "surface": f"{region_label} · Поверхность" if region_label else "Поверхность"
+        }
         for level in self.levels:
             if level.map_layer_id != "surface" or level.display_name or level.floor_label:
                 labels[level.map_layer_id] = level.layer_display_name

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -13,7 +14,7 @@ from PIL import Image
 DEFAULT_REVISION = "eea752b746ae1f2e0c1988a574f2b7b0"
 DEFAULT_ORIGIN = (24206, 8918)
 URL_TEMPLATE = (
-    "https://act-webstatic.hoyoverse.com/map_manage/map/2/"
+    "https://act-webstatic.hoyoverse.com/map_manage/map/{map_id}/"
     "{revision}/{x}_{y}_{zoom}.webp"
 )
 
@@ -21,12 +22,20 @@ URL_TEMPLATE = (
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build a local atlas from observed HoYoLAB map tiles")
     parser.add_argument("output", type=Path)
+    parser.add_argument("--region-id", default="fontaine")
+    parser.add_argument("--map-id", type=int, default=2)
+    parser.add_argument("--level-id", default=None)
     parser.add_argument("--revision", default=DEFAULT_REVISION)
     parser.add_argument("--zoom", default="N1", choices=("N2", "N1"))
     parser.add_argument("--x", default="32:43", help="Inclusive tile range, for example 32:43")
     parser.add_argument("--y", default="12:19", help="Inclusive tile range, for example 12:19")
     parser.add_argument("--origin-x", type=float, default=DEFAULT_ORIGIN[0])
     parser.add_argument("--origin-y", type=float, default=DEFAULT_ORIGIN[1])
+    parser.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="Keep empty atlas cells for missing/transparent official tiles",
+    )
     return parser
 
 
@@ -40,20 +49,38 @@ def _range(value: str) -> range:
     return range(start, end + 1)
 
 
+def _world_to_atlas(
+    *, zoom: str, origin_x: float, origin_y: float, min_x: int, min_y: int, tile_size: int
+) -> list[list[float]]:
+    divisor = 2 if zoom == "N1" else 4
+    return [
+        [1.0 / divisor, 0.0, origin_x / divisor - min_x * tile_size],
+        [0.0, 1.0 / divisor, origin_y / divisor - min_y * tile_size],
+        [0.0, 0.0, 1.0],
+    ]
+
+
 def main() -> int:
     args = _parser().parse_args()
     xs, ys = _range(args.x), _range(args.y)
     tiles_dir = args.output / "tiles"
     tiles_dir.mkdir(parents=True, exist_ok=True)
 
-    def fetch(position: tuple[int, int]) -> tuple[int, int, Path]:
+    def fetch(position: tuple[int, int]) -> tuple[int, int, Path | None]:
         x, y = position
         output = tiles_dir / f"{x}_{y}_{args.zoom}.webp"
         if not output.exists():
-            url = URL_TEMPLATE.format(revision=args.revision, x=x, y=y, zoom=args.zoom)
+            url = URL_TEMPLATE.format(
+                map_id=args.map_id, revision=args.revision, x=x, y=y, zoom=args.zoom
+            )
             request = urllib.request.Request(url, headers={"User-Agent": "GenshinNavigator/0.1"})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                output.write_bytes(response.read())
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    output.write_bytes(response.read())
+            except urllib.error.HTTPError as exc:
+                if args.allow_missing and exc.code == 404:
+                    return x, y, None
+                raise
         return x, y, output
 
     positions = [(x, y) for y in ys for x in xs]
@@ -63,13 +90,15 @@ def main() -> int:
     tile_size = 256
     atlas = Image.new("RGB", (len(xs) * tile_size, len(ys) * tile_size), (13, 22, 31))
     for x, y, path in tiles:
+        if path is None:
+            continue
         atlas.paste(Image.open(path).convert("RGB"), ((x - xs.start) * tile_size, (y - ys.start) * tile_size))
     atlas.save(args.output / "atlas.png")
 
     metadata = {
         "source": "HoYoLAB Interactive Map",
-        "region_id": "fontaine",
-        "map_id": 2,
+        "region_id": args.region_id,
+        "map_id": args.map_id,
         "revision": args.revision,
         "zoom": args.zoom,
         "tile_size": tile_size,
@@ -80,37 +109,36 @@ def main() -> int:
             "max_y": ys.stop - 1,
         },
         "atlas_size": list(atlas.size),
-        "tile_count": len(tiles),
+        "tile_count": sum(path is not None for _, _, path in tiles),
+        "requested_tile_count": len(tiles),
+        "missing_tile_count": sum(path is None for _, _, path in tiles),
         "world_origin_zoom_0": [args.origin_x, args.origin_y],
-        "world_to_atlas": [
-            [
-                1.0 / (2 if args.zoom == "N1" else 4),
-                0.0,
-                args.origin_x / (2 if args.zoom == "N1" else 4)
-                - xs.start * tile_size,
-            ],
-            [
-                0.0,
-                1.0 / (2 if args.zoom == "N1" else 4),
-                args.origin_y / (2 if args.zoom == "N1" else 4)
-                - ys.start * tile_size,
-            ],
-            [0.0, 0.0, 1.0],
-        ],
+        "world_to_atlas": _world_to_atlas(
+            zoom=args.zoom,
+            origin_x=args.origin_x,
+            origin_y=args.origin_y,
+            min_x=xs.start,
+            min_y=ys.start,
+            tile_size=tile_size,
+        ),
         "url_template": URL_TEMPLATE.format(
-            revision=args.revision, x="{x}", y="{y}", zoom=args.zoom
+            map_id=args.map_id,
+            revision=args.revision,
+            x="{x}",
+            y="{y}",
+            zoom=args.zoom,
         ),
     }
     (args.output / "metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     surface_pyramid = {
-        "region_id": "fontaine",
+        "region_id": args.region_id,
         "canonical_size": list(atlas.size),
         "default_map_layer_id": "surface",
         "levels": [
             {
-                "id": f"fontaine_surface_{args.zoom.lower()}",
+                "id": args.level_id or f"{args.region_id}_surface_{args.zoom.lower()}",
                 "image": "atlas.png",
                 "resolution_scale": 1.0,
                 "map_layer_id": "surface",

@@ -208,6 +208,30 @@ class FailureRecorderTests(unittest.TestCase):
             self.assertIsNone(metadata["last_known_position"])
             self.assertEqual(len(metadata["frames"]), 3)
 
+    def test_initial_acquisition_failure_is_not_repeated_every_cooldown(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = FailureRecorder(
+                FailureRecorderConfig(
+                    enabled=True,
+                    output_dir=Path(directory),
+                    pre_frames=2,
+                    post_frames=0,
+                    cooldown_seconds=0,
+                    record_acquisition_failures=True,
+                    acquisition_timeout_seconds=1.0,
+                )
+            )
+            minimap = np.zeros((20, 20, 3), dtype=np.uint8)
+            localization = LocateResult(found=False, reason="no_match")
+            lost = snapshot(TrackerState.LOST)
+
+            saved = [
+                recorder.observe(minimap, localization, lost, timestamp)
+                for timestamp in (0.0, 1.0, 2.0, 3.0, 4.0)
+            ]
+
+            self.assertEqual(sum(path is not None for path in saved), 1)
+
     def test_short_initial_search_does_not_create_incident(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             recorder = FailureRecorder(

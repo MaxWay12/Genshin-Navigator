@@ -57,6 +57,7 @@ class FailureRecorder:
         self._last_tracked_layer_id: str | None = None
         self._lost_since_timestamp: float | None = None
         self._last_trigger_timestamp: float | None = None
+        self._initial_acquisition_reported = False
         self._incident_counter = 0
         self._manual_pending = False
 
@@ -140,6 +141,8 @@ class FailureRecorder:
                 )
                 acquisition_failure = (
                     self.config.record_acquisition_failures
+                    and not self._ever_tracked
+                    and not self._initial_acquisition_reported
                     and timestamp - self._lost_since_timestamp
                     >= self.config.acquisition_timeout_seconds
                 )
@@ -148,6 +151,7 @@ class FailureRecorder:
                         timestamp, "established_track_became_lost"
                     )
                 elif self._cooldown_ready(timestamp) and acquisition_failure:
+                    self._initial_acquisition_reported = True
                     saved = self._start_incident(
                         timestamp, "localization_acquisition_timed_out"
                     )

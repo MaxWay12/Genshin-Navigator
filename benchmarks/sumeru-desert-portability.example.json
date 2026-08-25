@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "name": "sumeru-desert-portability",
+  "kpis": {
+    "max_false_locks": 0,
+    "max_wrong_layer_positions": 0,
+    "max_reacquire_seconds": 3.0,
+    "max_one_frame_layer_runs": 0,
+    "max_stationary_jitter_p95_px": 5.0
+  },
+  "scenarios": [
+    {
+      "name": "desert walk and stop",
+      "path": "../datasets/local/scenarios/sumeru_desert_walk",
+      "gating": true
+    },
+    {
+      "name": "desert teleport",
+      "path": "../datasets/local/scenarios/sumeru_desert_teleport",
+      "gating": true
+    },
+    {
+      "name": "desert second landmark",
+      "path": "../datasets/local/scenarios/sumeru_desert_landmark",
+      "gating": true
+    }
+  ]
+}

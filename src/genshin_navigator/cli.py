@@ -74,7 +74,11 @@ def _parser() -> argparse.ArgumentParser:
     record_sequence.add_argument("--config", default="config.json")
     record_sequence.add_argument("--duration", type=float, required=True)
     record_sequence.add_argument("--name", default="scenario")
-    record_sequence.add_argument("--expected-region", default="fontaine")
+    record_sequence.add_argument(
+        "--expected-region",
+        default=None,
+        help="Expected region (defaults to data.region_id from config)",
+    )
     record_sequence.add_argument("--expected-start-layer")
     record_sequence.add_argument("--expected-end-layer")
     record_sequence.add_argument("--stationary-last-seconds", type=float, default=0.0)
@@ -583,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output,
                 args.duration,
                 name=args.name,
-                expected_region_id=args.expected_region,
+                expected_region_id=args.expected_region or config.data.region_id,
                 expected_start_layer=args.expected_start_layer,
                 expected_end_layer=args.expected_end_layer,
                 stationary_last_seconds=args.stationary_last_seconds,
