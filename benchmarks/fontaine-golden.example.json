@@ -23,6 +23,11 @@
       "name": "known layer transition recording",
       "path": "../datasets/local/scenarios/layer_transition",
       "gating": false
+    },
+    {
+      "name": "canonical surface to floor78 v2",
+      "path": "../datasets/local/scenarios/canonical_surface_floor78_v2",
+      "gating": false
     }
   ]
 }
