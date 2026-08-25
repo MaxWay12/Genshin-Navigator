@@ -30,6 +30,20 @@ class LocalStubMatcher(StubMatcher):
 
 
 class PyramidMatcherTests(unittest.TestCase):
+    def test_exposes_readable_layer_name_and_floor_label(self) -> None:
+        level = PyramidLevel(
+            id="floor78", matcher=StubMatcher(LocateResult(found=False)),
+            local_to_canonical=np.eye(3), map_layer_id="underground:floor78",
+            coordinate_space=CoordinateSpace.LAYER_LOCAL,
+            display_name="Источник всех вод", floor_label="B1",
+        )
+        matcher = PyramidMatcher((100, 100), [level])
+
+        self.assertEqual(
+            matcher.layer_labels["underground:floor78"],
+            "Источник всех вод · B1",
+        )
+
     def test_selects_successful_level_and_returns_canonical_coordinates(self) -> None:
         base = PyramidLevel(
             id="base",

@@ -123,9 +123,42 @@ class PoiConfig:
 
 
 @dataclass(frozen=True)
+class HotkeyConfig:
+    previous: int = 0x64
+    next: int = 0x66
+    skip: int = 0x62
+    collected_hold: int = 0x65
+    undo: int = 0x68
+    toggle_view: int = 0x60
+    toggle_lock: int = 0x6E
+
+    def __post_init__(self) -> None:
+        values = tuple(self.__dict__.values())
+        if any(not 1 <= value <= 0xFE for value in values):
+            raise ValueError("navigation.hotkeys values must be Windows virtual-key codes")
+        if len(set(values)) != len(values):
+            raise ValueError("navigation.hotkeys values must be unique")
+
+
+@dataclass(frozen=True)
 class NavigationConfig:
     enabled: bool = True
     calibration_path: Path = Path("datasets/local/calibration/fontaine.json")
+    default_view: str = "hud"
+    hud_width: int = 360
+    hud_height: int = 150
+    hud_state_path: Path = Path("datasets/local/ui/hud_state.json")
+    collected_hold_seconds: float = 1.0
+    global_hotkeys: bool = True
+    hotkeys: HotkeyConfig = field(default_factory=HotkeyConfig)
+
+    def __post_init__(self) -> None:
+        if self.default_view not in {"hud", "map"}:
+            raise ValueError("navigation.default_view must be hud or map")
+        if self.hud_width < 240 or self.hud_height < 120:
+            raise ValueError("navigation HUD dimensions are too small")
+        if self.collected_hold_seconds <= 0:
+            raise ValueError("navigation.collected_hold_seconds must be positive")
 
 
 @dataclass(frozen=True)
@@ -212,12 +245,19 @@ def load_config(path: str | Path) -> AppConfig:
     poi_target_kinds = tuple(poi_raw.pop("target_kinds", ("chest",)))
 
     navigation_raw = dict(raw.get("navigation", {}))
+    hotkeys_raw = dict(navigation_raw.pop("hotkeys", {}))
     calibration_value = navigation_raw.pop(
         "calibration_path", "datasets/local/calibration/fontaine.json"
     )
     calibration_path = Path(calibration_value)
     if not calibration_path.is_absolute():
         calibration_path = (config_path.parent / calibration_path).resolve()
+    hud_state_value = navigation_raw.pop(
+        "hud_state_path", "datasets/local/ui/hud_state.json"
+    )
+    hud_state_path = Path(hud_state_value)
+    if not hud_state_path.is_absolute():
+        hud_state_path = (config_path.parent / hud_state_path).resolve()
 
     data_raw = dict(raw.get("data", {}))
     database_value = data_raw.pop(
@@ -262,6 +302,8 @@ def load_config(path: str | Path) -> AppConfig:
         ),
         navigation=NavigationConfig(
             calibration_path=calibration_path,
+            hud_state_path=hud_state_path,
+            hotkeys=HotkeyConfig(**hotkeys_raw),
             **navigation_raw,
         ),
         data=DataConfig(

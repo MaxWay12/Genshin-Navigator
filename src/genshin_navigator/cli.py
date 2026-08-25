@@ -23,6 +23,7 @@ from .data_store import (
 )
 from .evaluation import evaluate_dataset
 from .failure_recorder import FailureRecorder
+from .hotkeys import HotkeyAction
 from .matcher import MinimapMatcher
 from .navigation import NavigationController
 from .pyramid import Locator, PyramidMatcher, load_pyramid
@@ -433,6 +434,7 @@ def main(argv: list[str] | None = None) -> int:
                 else None
             )
             layer_maps = None
+            layer_labels = None
             if isinstance(matcher, PyramidMatcher):
                 layer_maps = {
                     level.map_layer_id: level.matcher.reference_map  # type: ignore[attr-defined]
@@ -440,6 +442,7 @@ def main(argv: list[str] | None = None) -> int:
                     if level.map_layer_id != "surface"
                     and hasattr(level.matcher, "reference_map")
                 }
+                layer_labels = matcher.layer_labels
             data = _runtime_data(config)
             poi_catalog = data.catalog if data is not None else None
             poi_progress = data.progress if data is not None else None
@@ -463,6 +466,22 @@ def main(argv: list[str] | None = None) -> int:
                 poi_target_kinds=set(config.poi.target_kinds),
                 poi_progress=poi_progress,
                 navigation=navigation,
+                layer_labels=layer_labels,
+                default_view=config.navigation.default_view,
+                hud_width=config.navigation.hud_width,
+                hud_height=config.navigation.hud_height,
+                hud_state_path=config.navigation.hud_state_path,
+                collected_hold_seconds=config.navigation.collected_hold_seconds,
+                global_hotkeys=config.navigation.global_hotkeys,
+                hotkey_virtual_keys={
+                    HotkeyAction.PREVIOUS: config.navigation.hotkeys.previous,
+                    HotkeyAction.NEXT: config.navigation.hotkeys.next,
+                    HotkeyAction.SKIP: config.navigation.hotkeys.skip,
+                    HotkeyAction.COLLECTED_HOLD: config.navigation.hotkeys.collected_hold,
+                    HotkeyAction.UNDO: config.navigation.hotkeys.undo,
+                    HotkeyAction.TOGGLE_VIEW: config.navigation.hotkeys.toggle_view,
+                    HotkeyAction.TOGGLE_LOCK: config.navigation.hotkeys.toggle_lock,
+                },
             )
             previous = time.perf_counter()
             try:

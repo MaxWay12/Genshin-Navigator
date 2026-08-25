@@ -27,6 +27,8 @@ class PyramidLevel:
     resolution_scale: float = 1.0
     map_layer_id: str = "surface"
     coordinate_space: CoordinateSpace = CoordinateSpace.SURFACE_ATLAS
+    display_name: str = ""
+    floor_label: str = ""
 
     def __post_init__(self) -> None:
         matrix = np.asarray(self.local_to_canonical, dtype=np.float64)
@@ -39,6 +41,15 @@ class PyramidLevel:
         if not self.map_layer_id.strip():
             raise ValueError(f"Pyramid level {self.id!r} map_layer_id must not be empty")
         object.__setattr__(self, "local_to_canonical", matrix)
+
+    @property
+    def layer_display_name(self) -> str:
+        parts = [part for part in (self.display_name, self.floor_label) if part]
+        return " · ".join(parts) if parts else (
+            "Фонтейн · Поверхность"
+            if self.map_layer_id == "surface"
+            else self.map_layer_id
+        )
 
 
 class PyramidMatcher:
@@ -62,6 +73,14 @@ class PyramidMatcher:
         self.levels = levels
         self.early_accept_confidence = early_accept_confidence
         self.region_id = region_id
+
+    @property
+    def layer_labels(self) -> dict[str, str]:
+        labels: dict[str, str] = {"surface": "Фонтейн · Поверхность"}
+        for level in self.levels:
+            if level.map_layer_id != "surface" or level.display_name or level.floor_label:
+                labels[level.map_layer_id] = level.layer_display_name
+        return labels
 
     @staticmethod
     def _project(matrix: np.ndarray, x: float, y: float) -> tuple[float, float]:
@@ -310,6 +329,7 @@ def load_pyramid(path: str | Path, config: MatcherConfig | None = None) -> Pyram
                 else CoordinateSpace.LAYER_LOCAL.value,
             )
         )
+        metadata = item.get("metadata") or {}
         levels.append(
             PyramidLevel(
                 id=str(item["id"]),
@@ -322,6 +342,8 @@ def load_pyramid(path: str | Path, config: MatcherConfig | None = None) -> Pyram
                 resolution_scale=float(item.get("resolution_scale", 1.0)),
                 map_layer_id=map_layer_id,
                 coordinate_space=coordinate_space,
+                display_name=str(metadata.get("name") or ""),
+                floor_label=str(metadata.get("label") or ""),
             )
         )
     return PyramidMatcher((width, height), levels, region_id=region_id)

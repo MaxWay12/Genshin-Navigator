@@ -69,6 +69,21 @@
   },
   "navigation": {
     "enabled": true,
-    "calibration_path": "datasets/local/calibration/fontaine.json"
+    "calibration_path": "datasets/local/calibration/fontaine.json",
+    "default_view": "hud",
+    "hud_width": 360,
+    "hud_height": 150,
+    "hud_state_path": "datasets/local/ui/hud_state.json",
+    "collected_hold_seconds": 1.0,
+    "global_hotkeys": true,
+    "hotkeys": {
+      "previous": 100,
+      "next": 102,
+      "skip": 98,
+      "collected_hold": 101,
+      "undo": 104,
+      "toggle_view": 96,
+      "toggle_lock": 110
+    }
   }
 }
