@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from math import atan2, degrees
 
 from .calibration import DistanceCalibration
-from .poi import PoiCatalog, PoiProgress, PointOfInterest
+from .poi import PointOfInterest, PoiRepository, ProgressRepository
 from .position import CoordinateSpace, MapPosition, PositionState
 from .tracker import TrackerSnapshot
 
@@ -26,8 +26,8 @@ class NavigationSnapshot:
 class NavigationController:
     def __init__(
         self,
-        catalog: PoiCatalog,
-        progress: PoiProgress,
+        catalog: PoiRepository,
+        progress: ProgressRepository,
         *,
         target_kinds: set[str] | None = None,
         calibration: DistanceCalibration | None = None,

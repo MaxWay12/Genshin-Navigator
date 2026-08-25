@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from .navigation import NavigationController, NavigationSnapshot
-from .poi import PoiCatalog, PoiProgress, PointOfInterest
+from .poi import PointOfInterest, PoiRepository, ProgressRepository
 from .tracker import TrackerSnapshot, TrackerState
 
 
@@ -27,10 +27,10 @@ class DebugMapView:
         self,
         atlas: np.ndarray,
         layer_maps: dict[str, np.ndarray] | None = None,
-        poi_catalog: PoiCatalog | None = None,
+        poi_catalog: PoiRepository | None = None,
         poi_kinds: set[str] | None = None,
         poi_target_kinds: set[str] | None = None,
-        poi_progress: PoiProgress | None = None,
+        poi_progress: ProgressRepository | None = None,
         navigation: NavigationController | None = None,
         max_width: int = 1100,
         max_height: int = 720,

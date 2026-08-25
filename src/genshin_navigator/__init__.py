@@ -2,7 +2,13 @@
 
 from .matcher import LocateResult, MinimapMatcher
 from .position import CoordinateSpace, MapPosition, PositionState
-from .poi import PoiCatalog, PoiProgress, PointOfInterest
+from .poi import (
+    PoiCatalog,
+    PoiProgress,
+    PointOfInterest,
+    PoiRepository,
+    ProgressRepository,
+)
 from .pyramid import PyramidMatcher, load_pyramid
 
 __all__ = [
@@ -13,6 +19,8 @@ __all__ = [
     "PoiCatalog",
     "PoiProgress",
     "PointOfInterest",
+    "PoiRepository",
+    "ProgressRepository",
     "PositionState",
     "PyramidMatcher",
     "load_pyramid",

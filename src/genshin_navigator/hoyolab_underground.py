@@ -65,7 +65,6 @@ def fetch_point_groups(map_id: int = 2, lang: str = "ru-ru") -> list[dict[str, A
         headers={
             "User-Agent": "GenshinNavigator/0.1",
             "x-rpc-language": lang,
-            "x-rpc-map_version": "4.5",
         },
     )
     with urllib.request.urlopen(request, timeout=30) as response:

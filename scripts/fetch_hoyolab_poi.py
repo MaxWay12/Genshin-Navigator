@@ -8,6 +8,7 @@ from genshin_navigator.hoyolab_poi import (
     DEFAULT_LABEL_KINDS,
     build_catalog,
     build_space_metrics,
+    content_version_for,
     fetch_labels,
     fetch_points,
     write_catalog,
@@ -19,7 +20,7 @@ def main() -> int:
     parser.add_argument("output", type=Path)
     parser.add_argument("--surface-metadata", type=Path, required=True)
     parser.add_argument("--underground-metadata", type=Path, required=True)
-    parser.add_argument("--map-version", default="6.8")
+    parser.add_argument("--map-version", default=None)
     parser.add_argument("--lang", default="ru-ru")
     parser.add_argument("--area-id", type=int, default=8)
     args = parser.parse_args()
@@ -37,10 +38,16 @@ def main() -> int:
         label_kinds=DEFAULT_LABEL_KINDS,
     )
     spaces = build_space_metrics(surface, underground)
+    content_version = content_version_for(
+        labels,
+        points,
+        explicit_version=args.map_version,
+        asset_revision=str(surface.get("revision") or "") or None,
+    )
     path = write_catalog(
         args.output,
         pois,
-        map_version=args.map_version,
+        map_version=content_version,
         stats=stats,
         spaces=spaces,
     )

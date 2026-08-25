@@ -2,11 +2,27 @@ from __future__ import annotations
 
 import unittest
 
-from genshin_navigator.hoyolab_poi import build_catalog, build_space_metrics
+from genshin_navigator.hoyolab_poi import (
+    build_catalog,
+    build_space_metrics,
+    content_version_for,
+)
 from genshin_navigator.position import CoordinateSpace
 
 
 class HoyolabPoiTests(unittest.TestCase):
+    def test_content_version_is_stable_and_changes_with_upstream_data(self) -> None:
+        labels = [{"id": 17, "name": "Chest"}]
+        first = content_version_for(labels, [{"id": 2}, {"id": 1}])
+        reordered = content_version_for(labels, [{"id": 1}, {"id": 2}])
+        changed = content_version_for(labels, [{"id": 1}, {"id": 3}])
+
+        self.assertEqual(first, reordered)
+        self.assertNotEqual(first, changed)
+        self.assertEqual(
+            content_version_for(labels, [], explicit_version="fixture"), "fixture"
+        )
+
     def test_rejects_obsolete_vertical_surface_transform(self) -> None:
         surface = {
             "region_id": "fontaine",

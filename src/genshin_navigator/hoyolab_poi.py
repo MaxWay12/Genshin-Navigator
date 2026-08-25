@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -29,15 +30,17 @@ DEFAULT_LABEL_KINDS = {
 }
 
 
-def _fetch(endpoint: str, *, map_id: int, lang: str, map_version: str) -> dict[str, Any]:
+def _fetch(endpoint: str, *, map_id: int, lang: str, map_version: str | None) -> dict[str, Any]:
     query = urllib.parse.urlencode({"map_id": map_id, "app_sn": "ys_obc", "lang": lang})
+    headers = {
+        "User-Agent": "GenshinNavigator/0.1",
+        "x-rpc-language": lang,
+    }
+    if map_version:
+        headers["x-rpc-map_version"] = map_version
     request = urllib.request.Request(
         f"{endpoint}?{query}",
-        headers={
-            "User-Agent": "GenshinNavigator/0.1",
-            "x-rpc-language": lang,
-            "x-rpc-map_version": map_version,
-        },
+        headers=headers,
     )
     with urllib.request.urlopen(request, timeout=90) as response:
         payload = json.load(response)
@@ -46,14 +49,37 @@ def _fetch(endpoint: str, *, map_id: int, lang: str, map_version: str) -> dict[s
     return payload.get("data", {})
 
 
-def fetch_labels(map_id: int = 2, lang: str = "ru-ru", map_version: str = "6.8") -> list[dict[str, Any]]:
+def fetch_labels(map_id: int = 2, lang: str = "ru-ru", map_version: str | None = None) -> list[dict[str, Any]]:
     data = _fetch(LABEL_TREE_URL, map_id=map_id, lang=lang, map_version=map_version)
     return [child for parent in data.get("tree", []) for child in parent.get("children", [])]
 
 
-def fetch_points(map_id: int = 2, lang: str = "ru-ru", map_version: str = "6.8") -> list[dict[str, Any]]:
+def fetch_points(map_id: int = 2, lang: str = "ru-ru", map_version: str | None = None) -> list[dict[str, Any]]:
     data = _fetch(POINT_LIST_URL, map_id=map_id, lang=lang, map_version=map_version)
     return data.get("point_list", [])
+
+
+def content_version_for(
+    labels: Iterable[dict[str, Any]],
+    points: Iterable[dict[str, Any]],
+    *,
+    explicit_version: str | None = None,
+    asset_revision: str | None = None,
+) -> str:
+    """Stable version of the actual normalized upstream response."""
+    if explicit_version:
+        return explicit_version
+    payload = json.dumps(
+        {
+            "asset_revision": asset_revision,
+            "labels": sorted(labels, key=lambda item: int(item.get("id", 0))),
+            "points": sorted(points, key=lambda item: int(item.get("id", 0))),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()[:20]
 
 
 def _project(matrix: np.ndarray, x: float, y: float) -> tuple[float, float]:

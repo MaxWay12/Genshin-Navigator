@@ -51,6 +51,9 @@ Copy-Item config.example.json config.json
   --surface-metadata datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
   --underground-metadata datasets\local\references\hoyolab_fontaine_underground\metadata.json
 
+.venv\Scripts\genshin-navigator sync-data --config config.json
+.venv\Scripts\genshin-navigator data-status --config config.json
+
 .venv\Scripts\python -m unittest discover -s tests -v
 .venv\Scripts\genshin-navigator track --config config.json
 ```
@@ -58,6 +61,30 @@ Copy-Item config.example.json config.json
 Карты и POI остаются в `datasets/local` и не входят в Git. Перед первым запуском
 проверьте ROI под своё разрешение экрана; остальные актуальные параметры уже есть
 в `config.example.json`.
+
+### Локальные данные и обновление POI
+
+По умолчанию используется `storage_backend: auto`. При первом запуске существующие
+`fontaine.json` и `poi_progress.json` импортируются в
+`datasets/local/data/genshin_navigator.db`, после чего трекер читает каталог и
+прогресс только из SQLite. Интернет для запуска и навигации не требуется.
+
+Обновление из публичной интерактивной карты выполняется отдельно:
+
+```powershell
+.venv\Scripts\genshin-navigator sync-data --config config.json
+.venv\Scripts\genshin-navigator data-status --config config.json
+```
+
+`sync-data` сначала загружает и проверяет весь новый каталог, а затем заменяет
+рабочий снимок одной транзакцией. При ошибке сети, неизвестном слое или повреждённом
+ответе прежние данные остаются рабочими. Версия контента вычисляется по фактическому
+ответу HoYoLAB; для воспроизводимого снимка можно явно передать `--map-version`.
+
+Тяжёлые карты и изображения в SQLite не записываются. База хранит только POI,
+метрики, прогресс, версии и пути к локальным assets. Временный аварийный режим можно
+включить через `data.storage_backend: json`; после появления рабочей SQLite-базы
+автоматического молчаливого отката к JSON нет.
 
 1. Поместите цельное изображение карты в `assets/world_map.png`. Оно должно быть
    того же визуального стиля и масштаба, что и содержимое миникарты.

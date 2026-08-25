@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -14,12 +15,25 @@ from .calibration import CalibrationSession, load_calibration
 from .capture import crop_roi, grab_screen, load_image, save_screen
 from .config import AppConfig, load_config
 from .debug_view import DebugMapView
+from .data_store import (
+    DataBundle,
+    SqliteDataProvider,
+    collect_assets,
+    open_data_bundle,
+)
 from .evaluation import evaluate_dataset
 from .failure_recorder import FailureRecorder
 from .matcher import MinimapMatcher
 from .navigation import NavigationController
 from .pyramid import Locator, PyramidMatcher, load_pyramid
-from .poi import PoiCatalog, PoiProgress
+from .hoyolab_poi import (
+    DEFAULT_LABEL_KINDS,
+    build_catalog,
+    build_space_metrics,
+    content_version_for,
+    fetch_labels,
+    fetch_points,
+)
 from .position import CoordinateSpace, MapPosition, PositionState
 from .screen_gate import MinimapScreenGate
 from .scenario import evaluate_scenario, record_scenario
@@ -79,7 +93,82 @@ def _parser() -> argparse.ArgumentParser:
         "--output", default="datasets/local/calibration/fontaine.json"
     )
     calibrate.add_argument("--samples", type=int, default=3)
+
+    sync_data = subparsers.add_parser(
+        "sync-data", help="Atomically update the offline Fontaine data store"
+    )
+    sync_data.add_argument("--config", default="config.json")
+    sync_data.add_argument("--region", default=None)
+    sync_data.add_argument("--map-version", default=None)
+
+    data_status = subparsers.add_parser(
+        "data-status", help="Show offline data, content, and asset status"
+    )
+    data_status.add_argument("--config", default="config.json")
+    data_status.add_argument("--region", default=None)
     return parser
+
+
+def _runtime_data(config: AppConfig) -> DataBundle | None:
+    if not config.poi.enabled:
+        return None
+    return open_data_bundle(
+        backend=config.data.storage_backend,
+        database_path=config.data.database_path,
+        catalog_path=config.poi.catalog_path,
+        progress_path=config.poi.progress_path,
+        region_id=config.data.region_id,
+    )
+
+
+def _sync_data(config: AppConfig, region_id: str, map_version: str | None) -> dict[str, object]:
+    if config.data.storage_backend == "json":
+        raise ValueError("sync-data requires data.storage_backend=auto or sqlite")
+    if config.data.surface_metadata_path is None or config.data.underground_metadata_path is None:
+        raise ValueError(
+            "sync-data requires data.surface_metadata_path and underground_metadata_path"
+        )
+    surface = json.loads(
+        config.data.surface_metadata_path.read_text(encoding="utf-8")
+    )
+    underground = json.loads(
+        config.data.underground_metadata_path.read_text(encoding="utf-8")
+    )
+    if str(surface.get("region_id", region_id)) != region_id:
+        raise ValueError("Surface metadata region does not match requested region")
+    requested_version = map_version or config.data.map_version
+    labels = fetch_labels(
+        map_id=config.data.map_id, lang=config.data.lang, map_version=requested_version
+    )
+    points = fetch_points(
+        map_id=config.data.map_id, lang=config.data.lang, map_version=requested_version
+    )
+    pois, stats = build_catalog(
+        points, labels, surface, underground,
+        area_id=config.data.area_id, label_kinds=DEFAULT_LABEL_KINDS,
+    )
+    metrics = build_space_metrics(surface, underground)
+    version = content_version_for(
+        labels, points, explicit_version=requested_version,
+        asset_revision=str(surface.get("revision") or "") or None,
+    )
+    provider = SqliteDataProvider(config.data.database_path)
+    if provider.is_empty(region_id) and config.poi.catalog_path is not None and config.poi.catalog_path.exists():
+        provider.import_legacy(
+            config.poi.catalog_path, config.poi.progress_path, region_id=region_id
+        )
+    assets = collect_assets(
+        region_id,
+        config.data.surface_metadata_path,
+        config.data.underground_metadata_path,
+        pyramid_path=config.pyramid_path,
+    )
+    provider.replace_content(
+        region_id, pois, metrics, content_version=version, assets=assets
+    )
+    status = provider.status(region_id)
+    status["sync_stats"] = stats
+    return status
 
 
 def _build_matcher(config: AppConfig) -> Locator:
@@ -122,9 +211,10 @@ def _locate_once(config: AppConfig, matcher: Locator, screenshot: str | None) ->
 def _run_calibration(
     config: AppConfig, matcher: Locator, output: str | Path, required_samples: int
 ) -> int:
-    if not config.poi.enabled or config.poi.catalog_path is None:
-        raise ValueError("calibrate-distance requires an enabled POI catalog with metrics")
-    catalog = PoiCatalog.load(config.poi.catalog_path)
+    data = _runtime_data(config)
+    if data is None:
+        raise ValueError("calibrate-distance requires enabled POI data with metrics")
+    catalog = data.catalog
     session = CalibrationSession(catalog, required_samples=required_samples)
     tracker = LiveTracker(config.tracker)
     screen_gate = (
@@ -275,6 +365,31 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         config = load_config(args.config)
+        if args.command == "sync-data":
+            region_id = args.region or config.data.region_id
+            print(json.dumps(
+                _sync_data(config, region_id, args.map_version),
+                ensure_ascii=False, indent=2,
+            ))
+            return 0
+        if args.command == "data-status":
+            region_id = args.region or config.data.region_id
+            if config.data.storage_backend == "json":
+                data = _runtime_data(config)
+                assert data is not None
+                report = {
+                    "backend": "json", "schema_version": None,
+                    "region_id": region_id, "poi_count": len(data.catalog.pois),
+                    "space_count": len(data.catalog.metrics),
+                    "collected_count": len(data.progress.collected_ids),
+                }
+            else:
+                data = _runtime_data(config)
+                assert data is not None and data.provider is not None
+                report = data.provider.status(region_id)
+                report["backend"] = data.backend
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "record-sequence":
             manifest = record_scenario(
                 config,
@@ -325,12 +440,9 @@ def main(argv: list[str] | None = None) -> int:
                     if level.map_layer_id != "surface"
                     and hasattr(level.matcher, "reference_map")
                 }
-            poi_catalog = (
-                PoiCatalog.load(config.poi.catalog_path)
-                if config.poi.enabled and config.poi.catalog_path is not None
-                else None
-            )
-            poi_progress = PoiProgress.load(config.poi.progress_path) if poi_catalog else None
+            data = _runtime_data(config)
+            poi_catalog = data.catalog if data is not None else None
+            poi_progress = data.progress if data is not None else None
             navigation = (
                 NavigationController(
                     poi_catalog,
@@ -416,7 +528,10 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(config.interval_seconds)
     except KeyboardInterrupt:
         return 130
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+    except (
+        OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError,
+        sqlite3.DatabaseError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

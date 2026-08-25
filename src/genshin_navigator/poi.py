@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from math import hypot, isfinite
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Protocol
 
 from .position import CoordinateSpace, MapPosition
 
@@ -217,3 +217,34 @@ class PoiProgress:
             encoding="utf-8",
         )
         os.replace(temporary, self.path)
+
+
+class PoiRepository(Protocol):
+    """Read-only POI contract consumed by navigation and UI."""
+
+    pois: tuple[PointOfInterest, ...]
+
+    def on_layer(self, position: MapPosition) -> tuple[PointOfInterest, ...]: ...
+
+    def nearest(
+        self,
+        position: MapPosition,
+        *,
+        kinds: set[str] | None = None,
+        exclude_ids: set[str] | None = None,
+        limit: int = 1,
+    ) -> list[tuple[PointOfInterest, float]]: ...
+
+    def world_distance(
+        self, position: MapPosition, poi: PointOfInterest
+    ) -> float | None: ...
+
+
+class ProgressRepository(Protocol):
+    """Local progress contract; remote sync is deliberately outside v1."""
+
+    collected_ids: set[str]
+
+    def mark_collected(self, poi_id: str) -> None: ...
+
+    def unmark_collected(self, poi_id: str) -> None: ...

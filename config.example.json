@@ -57,6 +57,16 @@
     "kinds": ["chest", "hydroculus", "waypoint"],
     "target_kinds": ["chest"]
   },
+  "data": {
+    "storage_backend": "auto",
+    "database_path": "datasets/local/data/genshin_navigator.db",
+    "region_id": "fontaine",
+    "surface_metadata_path": "datasets/local/references/hoyolab_fontaine_full_n1/metadata.json",
+    "underground_metadata_path": "datasets/local/references/hoyolab_fontaine_underground/metadata.json",
+    "map_id": 2,
+    "area_id": 8,
+    "lang": "ru-ru"
+  },
   "navigation": {
     "enabled": true,
     "calibration_path": "datasets/local/calibration/fontaine.json"

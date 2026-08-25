@@ -116,8 +116,6 @@ class PoiConfig:
     target_kinds: tuple[str, ...] = ("chest",)
 
     def __post_init__(self) -> None:
-        if self.enabled and self.catalog_path is None:
-            raise ValueError("poi.catalog_path is required when enabled")
         if not self.kinds:
             raise ValueError("poi.kinds must not be empty")
         if not self.target_kinds:
@@ -128,6 +126,29 @@ class PoiConfig:
 class NavigationConfig:
     enabled: bool = True
     calibration_path: Path = Path("datasets/local/calibration/fontaine.json")
+
+
+@dataclass(frozen=True)
+class DataConfig:
+    storage_backend: str = "auto"
+    database_path: Path = Path("datasets/local/data/genshin_navigator.db")
+    region_id: str = "fontaine"
+    surface_metadata_path: Path | None = Path(
+        "datasets/local/references/hoyolab_fontaine_full_n1/metadata.json"
+    )
+    underground_metadata_path: Path | None = Path(
+        "datasets/local/references/hoyolab_fontaine_underground/metadata.json"
+    )
+    map_id: int = 2
+    area_id: int = 8
+    lang: str = "ru-ru"
+    map_version: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.storage_backend not in {"auto", "sqlite", "json"}:
+            raise ValueError("data.storage_backend must be auto, sqlite, or json")
+        if self.map_id < 1 or self.area_id < 1:
+            raise ValueError("data map_id and area_id must be positive")
 
 
 @dataclass(frozen=True)
@@ -144,6 +165,15 @@ class AppConfig:
     screen_gate: ScreenGateConfig = field(default_factory=ScreenGateConfig)
     poi: PoiConfig = field(default_factory=PoiConfig)
     navigation: NavigationConfig = field(default_factory=NavigationConfig)
+    data: DataConfig = field(default_factory=DataConfig)
+
+    def __post_init__(self) -> None:
+        if (
+            self.poi.enabled
+            and self.data.storage_backend == "json"
+            and self.poi.catalog_path is None
+        ):
+            raise ValueError("poi.catalog_path is required for the JSON data backend")
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -189,6 +219,25 @@ def load_config(path: str | Path) -> AppConfig:
     if not calibration_path.is_absolute():
         calibration_path = (config_path.parent / calibration_path).resolve()
 
+    data_raw = dict(raw.get("data", {}))
+    database_value = data_raw.pop(
+        "database_path", "datasets/local/data/genshin_navigator.db"
+    )
+    database_path = resolve_optional(database_value)
+    assert database_path is not None
+    surface_metadata_path = resolve_optional(
+        data_raw.pop(
+            "surface_metadata_path",
+            "datasets/local/references/hoyolab_fontaine_full_n1/metadata.json",
+        )
+    )
+    underground_metadata_path = resolve_optional(
+        data_raw.pop(
+            "underground_metadata_path",
+            "datasets/local/references/hoyolab_fontaine_underground/metadata.json",
+        )
+    )
+
     return AppConfig(
         map_path=map_path,
         pyramid_path=pyramid_path,
@@ -214,5 +263,11 @@ def load_config(path: str | Path) -> AppConfig:
         navigation=NavigationConfig(
             calibration_path=calibration_path,
             **navigation_raw,
+        ),
+        data=DataConfig(
+            database_path=database_path,
+            surface_metadata_path=surface_metadata_path,
+            underground_metadata_path=underground_metadata_path,
+            **data_raw,
         ),
     )
