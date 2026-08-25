@@ -11,7 +11,7 @@ import numpy as np
 
 from .capture import load_image
 from .config import LocalSearchConfig, MatcherConfig
-from .matcher import LocateResult, MinimapMatcher, UndergroundMinimapMatcher
+from .matcher import CandidateMatch, LocateResult, MinimapMatcher, UndergroundMinimapMatcher
 from .position import CoordinateSpace, MapPosition
 
 
@@ -165,6 +165,31 @@ class PyramidMatcher:
             coordinate_space=level.coordinate_space,
         )
 
+    @staticmethod
+    def _with_candidates(
+        result: LocateResult, observations: list[LocateResult]
+    ) -> LocateResult:
+        ranked = sorted(
+            observations,
+            key=lambda item: (item.confidence, item.inliers, item.matches),
+            reverse=True,
+        )[:5]
+        return replace(
+            result,
+            candidates=tuple(
+                CandidateMatch(
+                    reference_id=item.reference_id,
+                    map_layer_id=item.map_layer_id,
+                    confidence=item.confidence,
+                    matches=item.matches,
+                    inliers=item.inliers,
+                    reason=item.reason,
+                    found=item.found,
+                )
+                for item in ranked
+            ),
+        )
+
     def locate(self, minimap: np.ndarray) -> LocateResult:
         candidates: list[LocateResult] = []
         failures: list[LocateResult] = []
@@ -180,7 +205,9 @@ class PyramidMatcher:
                         canonical_result.confidence >= self.early_accept_confidence
                         and canonical_result.inliers >= 20
                     ):
-                        return canonical_result
+                        return self._with_candidates(
+                            canonical_result, candidates + failures
+                        )
                 else:
                     failures.append(canonical_result)
             else:
@@ -207,9 +234,11 @@ class PyramidMatcher:
                     failures.append(self._tag_failure(fallback, level))
 
         if candidates:
-            return max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            return self._with_candidates(best, candidates + failures)
         best = max(failures, key=lambda item: (item.inliers, item.matches, item.confidence))
-        return replace(best, reason="no_pyramid_level_matched")
+        best = replace(best, reason="no_pyramid_level_matched")
+        return self._with_candidates(best, failures)
 
     def locate_near(
         self,
@@ -278,7 +307,8 @@ class PyramidMatcher:
             else:
                 failures.append(self._tag_failure(local_result, level))
         if candidates:
-            return max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            return self._with_candidates(best, candidates + failures)
         for level in fallback_levels:
             fallback = level.matcher.locate_fallback(minimap)  # type: ignore[attr-defined]
             if not fallback.found:
@@ -290,10 +320,12 @@ class PyramidMatcher:
             ) <= config.radius_px:
                 candidates.append(canonical)
         if candidates:
-            return max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            return self._with_candidates(best, candidates + failures)
         if failures:
             best = max(failures, key=lambda item: (item.inliers, item.matches, item.confidence))
-            return replace(best, reason="no_local_level_matched")
+            best = replace(best, reason="no_local_level_matched")
+            return self._with_candidates(best, failures)
         return LocateResult(
             found=False,
             reason="no_local_level_available",

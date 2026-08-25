@@ -23,6 +23,7 @@ class HotkeyAction(str, Enum):
     TOGGLE_DETAILS = "toggle_details"
     PREVIOUS_PAGE = "previous_page"
     NEXT_PAGE = "next_page"
+    REPORT_ISSUE = "report_issue"
 
 
 DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {
@@ -34,6 +35,7 @@ DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {
     HotkeyAction.TOGGLE_VIEW: 0x60,  # VK_NUMPAD0
     HotkeyAction.TOGGLE_LOCK: 0x6E,  # VK_DECIMAL
     HotkeyAction.QUIT: 0x69,  # VK_NUMPAD9
+    HotkeyAction.REPORT_ISSUE: 0x6B,  # VK_ADD
 }
 
 

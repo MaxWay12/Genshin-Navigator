@@ -86,7 +86,8 @@
       "undo": 104,
       "toggle_view": 96,
       "toggle_lock": 110,
-      "quit": 105
+      "quit": 105,
+      "report_issue": 107
     }
   },
   "poi_guidance": {

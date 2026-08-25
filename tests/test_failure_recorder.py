@@ -9,8 +9,8 @@ import cv2
 import numpy as np
 
 from genshin_navigator.config import FailureRecorderConfig
-from genshin_navigator.failure_recorder import FailureRecorder
-from genshin_navigator.matcher import LocateResult
+from genshin_navigator.failure_recorder import DiagnosticContext, FailureRecorder
+from genshin_navigator.matcher import CandidateMatch, LocateResult
 from genshin_navigator.tracker import TrackerSnapshot, TrackerState
 from genshin_navigator.position import CoordinateSpace, MapPosition
 
@@ -105,6 +105,51 @@ class FailureRecorderTests(unittest.TestCase):
             self.assertEqual(metadata["last_known_position"]["region_id"], "fontaine")
             stored = cv2.imread(str(incident / "minimap_000.png"))
             self.assertEqual(stored.shape, minimap.shape)
+            self.assertEqual(metadata["format_version"], 4)
+
+    def test_manual_report_is_anonymized_and_contains_ranked_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            recorder = FailureRecorder(
+                FailureRecorderConfig(
+                    enabled=False,
+                    output_dir=Path(temporary),
+                    pre_frames=2,
+                    post_frames=1,
+                ),
+                DiagnosticContext(
+                    app_version="0.1.0",
+                    schema_version=3,
+                    content_version="safe-content",
+                    reference_versions=("surface", "floor78"),
+                    windows_build="test-build",
+                    screen_resolution=(1920, 1080),
+                    dpi=96,
+                ),
+            )
+            minimap = np.zeros((8, 8, 3), dtype=np.uint8)
+            located = LocateResult(
+                found=True,
+                x_px=2,
+                y_px=3,
+                candidates=(CandidateMatch("surface", "surface", 0.9, 20, 16, None, True),),
+            )
+            tracked = snapshot(TrackerState.TRACKING, x=2, y=3)
+            recorder.observe(minimap, located, tracked, 1.0)
+            self.assertTrue(recorder.request_manual_report())
+            recorder.observe(minimap, located, tracked, 2.0)
+            incident = recorder.observe(minimap, located, tracked, 3.0)
+            self.assertIsNotNone(incident)
+            assert incident is not None
+            serialized = (incident / "metadata.json").read_text(encoding="utf-8")
+            metadata = json.loads(serialized)
+            self.assertEqual(metadata["trigger"], "manual_report")
+            self.assertEqual(metadata["environment"]["schema_version"], 3)
+            self.assertEqual(
+                metadata["frames"][0]["localization"]["candidates"][0]["reference_id"],
+                "surface",
+            )
+            for secret in ("1816430870", "cookie", "authorization", "C:\\Users\\maks-"):
+                self.assertNotIn(secret.lower(), serialized.lower())
 
     def test_close_flushes_partial_incident(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -5,6 +5,7 @@ import textwrap
 import time
 from math import cos, radians, sin
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -65,6 +66,7 @@ class DebugMapView:
         hint_service: PoiHintService | None = None,
         details_width: int | None = None,
         details_height: int = 650,
+        report_callback: Callable[[], bool] | None = None,
     ):
         if atlas is None or atlas.size == 0:
             raise ValueError("Debug atlas is empty")
@@ -97,6 +99,7 @@ class DebugMapView:
         self._toast = ""
         self._toast_until = 0.0
         self._quit_requested = False
+        self._report_callback = report_callback
         self._active_layer_id = ""
         self._state_store = HudStateStore(hud_state_path)
         self._hotkeys = hotkey_manager
@@ -246,10 +249,19 @@ class DebugMapView:
     def _show_toast(self, message: str, duration: float = 2.5) -> None:
         self._toast, self._toast_until = message, time.monotonic() + duration
 
+    def notify(self, message: str, duration: float = 4.0) -> None:
+        self._show_toast(message, duration)
+
     def _dispatch_action(self, action: HotkeyAction, navigation: NavigationSnapshot | None) -> None:
         if action is HotkeyAction.QUIT:
             self._hold.cancel()
             self._quit_requested = True
+            return
+        if action is HotkeyAction.REPORT_ISSUE:
+            accepted = self._report_callback() if self._report_callback else False
+            self._show_toast(
+                "Собираю diagnostic report…" if accepted else "Diagnostic recorder недоступен"
+            )
             return
         if action is HotkeyAction.TOGGLE_VIEW:
             self._hold.cancel()
@@ -319,6 +331,7 @@ class DebugMapView:
             ord("7"): HotkeyAction.TOGGLE_DETAILS,
             ord("1"): HotkeyAction.PREVIOUS_PAGE,
             ord("3"): HotkeyAction.NEXT_PAGE,
+            ord("+"): HotkeyAction.REPORT_ISSUE,
         }
         if key in (ord("m"), ord("M")) and self._navigation is not None:
             self._navigation.mark_collected()

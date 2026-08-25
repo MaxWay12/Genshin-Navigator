@@ -104,6 +104,8 @@ class PyramidMatcherTests(unittest.TestCase):
 
         self.assertEqual(result.reference_id, "strong")
         self.assertEqual(result.x_px, 20.0)
+        self.assertEqual([item.reference_id for item in result.candidates], ["strong", "weak"])
+        self.assertEqual(result.to_dict()["candidates"][0]["map_layer_id"], "surface")
 
     def test_stops_after_nearly_certain_candidate(self) -> None:
         certain = PyramidLevel(

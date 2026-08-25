@@ -12,6 +12,17 @@ from .config import MatcherConfig
 
 
 @dataclass(frozen=True)
+class CandidateMatch:
+    reference_id: str | None
+    map_layer_id: str | None
+    confidence: float
+    matches: int
+    inliers: int
+    reason: str | None
+    found: bool
+
+
+@dataclass(frozen=True)
 class LocateResult:
     found: bool
     x_px: float | None = None
@@ -33,6 +44,7 @@ class LocateResult:
     match_method: str | None = None
     region_id: str | None = None
     coordinate_space: CoordinateSpace | None = None
+    candidates: tuple[CandidateMatch, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         result = asdict(self)

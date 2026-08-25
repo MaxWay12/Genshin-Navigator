@@ -22,11 +22,30 @@ class _RecordedFrame:
     tracker: dict[str, object]
 
 
+@dataclass(frozen=True)
+class DiagnosticContext:
+    app_version: str = "unknown"
+    schema_version: int | None = None
+    content_version: str | None = None
+    reference_versions: tuple[str, ...] = ()
+    windows_build: str = "unknown"
+    screen_resolution: tuple[int, int] | None = None
+    dpi: int | None = None
+
+
 class FailureRecorder:
     """Save minimap-only incidents for track loss and failed acquisition."""
 
-    def __init__(self, config: FailureRecorderConfig):
+    def __init__(
+        self,
+        config: FailureRecorderConfig,
+        context: DiagnosticContext | None = None,
+        *,
+        automatic: bool = True,
+    ):
         self.config = config
+        self.context = context or DiagnosticContext()
+        self.automatic = automatic
         self._buffer: deque[_RecordedFrame] = deque(maxlen=config.pre_frames)
         self._incident: list[_RecordedFrame] | None = None
         self._trigger_index: int | None = None
@@ -39,10 +58,17 @@ class FailureRecorder:
         self._lost_since_timestamp: float | None = None
         self._last_trigger_timestamp: float | None = None
         self._incident_counter = 0
+        self._manual_pending = False
 
     @property
     def active(self) -> bool:
         return self._incident is not None
+
+    def request_manual_report(self) -> bool:
+        if self._incident is not None or self._manual_pending:
+            return False
+        self._manual_pending = True
+        return True
 
     @staticmethod
     def _frame(
@@ -86,10 +112,14 @@ class FailureRecorder:
         snapshot: TrackerSnapshot,
         timestamp: float,
     ) -> Path | None:
-        if not self.config.enabled:
-            return None
-
         frame = self._frame(minimap, localization, snapshot, timestamp)
+        if (
+            not self.config.enabled
+            and not self._manual_pending
+            and self._incident is None
+        ):
+            self._buffer.append(frame)
+            return None
         saved: Path | None = None
         if self._incident is not None:
             self._incident.append(frame)
@@ -98,7 +128,10 @@ class FailureRecorder:
                 saved = self._flush()
         else:
             self._buffer.append(frame)
-            if snapshot.state is TrackerState.LOST:
+            if self._manual_pending:
+                self._manual_pending = False
+                saved = self._start_incident(timestamp, "manual_report")
+            elif self.automatic and snapshot.state is TrackerState.LOST:
                 if self._lost_since_timestamp is None:
                     self._lost_since_timestamp = timestamp
 
@@ -180,7 +213,10 @@ class FailureRecorder:
             and self._trigger_index is not None
             and self._trigger_reason is not None
         )
-        if self._confirmed_layer_transition():
+        if (
+            self._trigger_reason != "manual_report"
+            and self._confirmed_layer_transition()
+        ):
             self._reset_incident()
             return None
         self._incident_counter += 1
@@ -208,11 +244,21 @@ class FailureRecorder:
             )
 
         metadata = {
-            "format_version": 3,
+            "format_version": 4,
             "privacy": "Only the configured minimap crop is stored; full game frames are not recorded.",
             "trigger": self._trigger_reason,
             "trigger_frame_index": self._trigger_index,
             "last_known_position": self._last_known(self._incident, self._trigger_index),
+            "environment": {
+                "app_version": self.context.app_version,
+                "schema_version": self.context.schema_version,
+                "content_version": self.context.content_version,
+                "reference_versions": list(self.context.reference_versions),
+                "windows_build": self.context.windows_build,
+                "screen_resolution": list(self.context.screen_resolution)
+                if self.context.screen_resolution else None,
+                "dpi": self.context.dpi,
+            },
             "frames": frames_metadata,
         }
         (incident_dir / "metadata.json").write_text(
@@ -225,4 +271,15 @@ class FailureRecorder:
     def close(self) -> Path | None:
         if self._incident is None:
             return None
+        return self._flush()
+
+    def save_buffered_manual_report(self, timestamp: float) -> Path | None:
+        if self._incident is not None or not self._buffer:
+            return None
+        self._incident = list(self._buffer)
+        self._trigger_index = len(self._incident) - 1
+        self._trigger_reason = "manual_report"
+        self._trigger_origin_layer_id = self._last_tracked_layer_id
+        self._post_remaining = 0
+        self._last_trigger_timestamp = timestamp
         return self._flush()

@@ -140,6 +140,20 @@ Copy-Item config.example.json config.json
 дополнительную резервную копию. Неизвестные POI перечисляются в preview и не
 добавляются в базу.
 
+### Обезличенный diagnostic bundle
+
+Во время работы GPS `NumAdd` сохраняет несколько crops миникарты до и после
+проблемного момента. Полный экран, UID, cookies, заголовки авторизации, абсолютные
+пути и `config.json` в отчёт не входят. Запасной пятисекундный запуск и replay:
+
+```powershell
+.venv\Scripts\genshin-navigator diagnostic-record --config config.json --duration 5
+.venv\Scripts\genshin-navigator replay-diagnostic artifacts/failures/failure_... --config config.json --report artifacts/diagnostic-replay.json
+```
+
+Новый формат v4 включает состояния tracker и до пяти лучших кандидатов каждого
+кадра. Replay сохраняет совместимость со старыми bundle v3.
+
 1. Поместите цельное изображение карты в `assets/world_map.png`. Оно должно быть
    того же визуального стиля и масштаба, что и содержимое миникарты.
 2. Сохраните тестовый снимок рабочего стола:

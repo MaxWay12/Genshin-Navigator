@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import ctypes
+import math
+import platform
 import time
+from dataclasses import replace
 from datetime import timedelta
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 from .calibration import load_calibration
 from .capture import crop_roi, grab_screen, load_image
 from .config import AppConfig
 from .data_store import DataBundle, open_data_bundle
 from .debug_view import DebugMapView
-from .failure_recorder import FailureRecorder
+from .failure_recorder import DiagnosticContext, FailureRecorder
 from .hotkeys import HotkeyAction
-from .matcher import MinimapMatcher
+from .matcher import LocateResult, MinimapMatcher
+from .storage_schema import SCHEMA_VERSION
 from .navigation import NavigationController
 from .poi_guidance import HoyoLabPoiHintProvider, PoiHintService, SqlitePoiHintRepository
 from .pyramid import Locator, PyramidMatcher, load_pyramid
@@ -47,7 +54,9 @@ class LiveApplication:
         self.config = config
         self.locator = locator or build_locator(config)
 
-    def _view(self, data: DataBundle | None) -> DebugMapView:
+    def _view(
+        self, data: DataBundle | None, report_callback=None
+    ) -> DebugMapView:
         config, locator = self.config, self.locator
         if config.debug_map_path is None:
             raise ValueError("track requires debug_map_path or map_path")
@@ -102,6 +111,7 @@ class LiveApplication:
             HotkeyAction.TOGGLE_VIEW: config.navigation.hotkeys.toggle_view,
             HotkeyAction.TOGGLE_LOCK: config.navigation.hotkeys.toggle_lock,
             HotkeyAction.QUIT: config.navigation.hotkeys.quit,
+            HotkeyAction.REPORT_ISSUE: config.navigation.hotkeys.report_issue,
         }
         if config.poi_guidance.enabled:
             hotkeys.update({
@@ -126,17 +136,57 @@ class LiveApplication:
             global_hotkeys=config.navigation.global_hotkeys,
             hotkey_virtual_keys=hotkeys,
             hint_service=hint_service,
+            report_callback=report_callback,
+        )
+
+    def _diagnostic_context(self, data: DataBundle | None) -> DiagnosticContext:
+        try:
+            app_version = version("genshin-navigator")
+        except PackageNotFoundError:
+            app_version = "development"
+        content_version = None
+        if data is not None and data.provider is not None:
+            content_version = data.provider.status(self.config.data.region_id).get(
+                "content_version"
+            )
+        references = (
+            tuple(level.id for level in self.locator.levels)
+            if isinstance(self.locator, PyramidMatcher)
+            else ("single_reference",)
+        )
+        resolution = None
+        dpi = None
+        try:
+            user32 = ctypes.windll.user32
+            resolution = (
+                int(user32.GetSystemMetrics(0)),
+                int(user32.GetSystemMetrics(1)),
+            )
+            dpi = int(user32.GetDpiForSystem())
+        except (AttributeError, OSError):
+            pass
+        return DiagnosticContext(
+            app_version=app_version,
+            schema_version=SCHEMA_VERSION if data and data.provider else None,
+            content_version=str(content_version) if content_version else None,
+            reference_versions=references,
+            windows_build=platform.version(),
+            screen_resolution=resolution,
+            dpi=dpi,
         )
 
     def run(self) -> int:
         config, locator = self.config, self.locator
         tracker = LiveTracker(config.tracker)
-        recorder = FailureRecorder(config.failure_recorder)
+        data = load_runtime_data(config)
+        recorder = FailureRecorder(
+            config.failure_recorder, self._diagnostic_context(data)
+        )
         gate = (
             MinimapScreenGate.from_config(config.screen_gate)
             if config.screen_gate.enabled else None
         )
-        view = self._view(load_runtime_data(config))
+        view = self._view(data, recorder.request_manual_report)
         previous = time.perf_counter()
         try:
             while True:
@@ -169,6 +219,9 @@ class LiveApplication:
                     print("tracking interruption; collecting minimap diagnostics...", flush=True)
                 if incident is not None:
                     print(f"failure incident saved: {incident}", flush=True)
+                    view.notify(
+                        f"Report: {incident.parent.name}/{incident.name}", 6.0
+                    )
                 elapsed = max(now - previous, 1e-6)
                 previous = now
                 if not view.show(snapshot, 1.0 / elapsed):
@@ -179,6 +232,55 @@ class LiveApplication:
             if incident is not None:
                 print(f"partial failure incident saved: {incident}", flush=True)
             view.close()
+
+    def record_diagnostic(self, duration_seconds: float) -> Path:
+        if duration_seconds <= 0:
+            raise ValueError("Diagnostic duration must be positive")
+        config, locator = self.config, self.locator
+        data = load_runtime_data(config)
+        frame_count = max(2, math.ceil(duration_seconds / config.interval_seconds) + 2)
+        recorder = FailureRecorder(
+            replace(
+                config.failure_recorder,
+                enabled=True,
+                pre_frames=frame_count,
+                post_frames=0,
+            ),
+            self._diagnostic_context(data),
+            automatic=False,
+        )
+        tracker = LiveTracker(config.tracker)
+        gate = (
+            MinimapScreenGate.from_config(config.screen_gate)
+            if config.screen_gate.enabled else None
+        )
+        started_at = time.perf_counter()
+        last_timestamp = started_at
+        while last_timestamp - started_at < duration_seconds:
+            loop_started = time.perf_counter()
+            minimap = crop_roi(grab_screen(), config.roi)
+            gate_result = gate.check(minimap) if gate else None
+            last_timestamp = time.perf_counter()
+            if gate_result is not None and not gate_result.minimap_present:
+                reason = gate_result.reason or "minimap_not_visible"
+                localization = LocateResult(found=False, reason=reason)
+                snapshot = tracker.pause(last_timestamp, reason)
+            else:
+                hint = tracker.position_hint
+                localization = (
+                    locator.locate_near(minimap, hint, config.local_search)
+                    if config.local_search.enabled
+                    and hint is not None
+                    and isinstance(locator, PyramidMatcher)
+                    else locator.locate(minimap)
+                )
+                snapshot = tracker.update(localization, last_timestamp)
+            recorder.observe(minimap, localization, snapshot, last_timestamp)
+            self._wait(loop_started)
+        saved = recorder.save_buffered_manual_report(last_timestamp)
+        if saved is None:
+            raise RuntimeError("No diagnostic frames were recorded")
+        return saved
 
     def _wait(self, started: float) -> None:
         remaining = self.config.interval_seconds - (time.perf_counter() - started)

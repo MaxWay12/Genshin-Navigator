@@ -132,6 +132,7 @@ class HotkeyConfig:
     toggle_view: int = 0x60
     toggle_lock: int = 0x6E
     quit: int = 0x69
+    report_issue: int = 0x6B
 
     def __post_init__(self) -> None:
         values = tuple(self.__dict__.values())

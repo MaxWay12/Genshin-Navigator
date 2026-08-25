@@ -21,6 +21,7 @@ from .data_store import (
     collect_assets,
 )
 from .evaluation import evaluate_dataset
+from .diagnostics import replay_diagnostic
 from .pyramid import Locator, PyramidMatcher
 from .hoyolab_poi import (
     DEFAULT_LABEL_KINDS,
@@ -147,6 +148,17 @@ def _parser() -> argparse.ArgumentParser:
     progress_import.add_argument("--region", default=None)
     progress_import.add_argument("--replace", action="store_true")
     progress_import.add_argument("--yes", action="store_true")
+    diagnostic = subparsers.add_parser(
+        "diagnostic-record", help="Record an anonymized minimap diagnostic bundle"
+    )
+    diagnostic.add_argument("--config", default="config.json")
+    diagnostic.add_argument("--duration", type=float, default=5.0)
+    diagnostic_replay = subparsers.add_parser(
+        "replay-diagnostic", help="Replay a diagnostic bundle (format v3 or v4)"
+    )
+    diagnostic_replay.add_argument("bundle")
+    diagnostic_replay.add_argument("--config", default="config.json")
+    diagnostic_replay.add_argument("--report", default=None)
     return parser
 
 
@@ -547,6 +559,19 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         matcher = _build_matcher(config)
+        if args.command == "diagnostic-record":
+            saved = LiveApplication(config, matcher).record_diagnostic(args.duration)
+            print(saved)
+            return 0
+        if args.command == "replay-diagnostic":
+            report = replay_diagnostic(args.bundle, config, matcher)
+            rendered = json.dumps(report, ensure_ascii=False, indent=2)
+            if args.report:
+                report_path = Path(args.report).resolve()
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                report_path.write_text(rendered, encoding="utf-8")
+            print(rendered)
+            return 0
         if args.command == "calibrate-distance":
             return _run_calibration(config, matcher, args.output, args.samples)
         if args.command == "evaluate-sequence":
@@ -558,7 +583,6 @@ def main(argv: list[str] | None = None) -> int:
                 report_path.write_text(rendered, encoding="utf-8")
             print(rendered)
             return 0 if report["passed"] is not False else 2
-
         if args.command == "locate":
             result = _locate_once(config, matcher, args.screenshot)
             print(json.dumps(result, ensure_ascii=False))
