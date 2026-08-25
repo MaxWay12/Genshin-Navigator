@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+from PIL import ImageFont
 
 from genshin_navigator.debug_view import DebugMapView
 from genshin_navigator.hotkeys import CollectedHoldController, HotkeyAction
@@ -16,6 +17,7 @@ from genshin_navigator.hud import (
 )
 from genshin_navigator.navigation import NavigationSnapshot
 from genshin_navigator.poi import PointOfInterest
+from genshin_navigator.poi_guidance import HintState, PoiHint, PoiHintSnapshot
 from genshin_navigator.position import CoordinateSpace, MapPosition, PositionState
 from genshin_navigator.tracker import TrackerSnapshot
 
@@ -50,6 +52,61 @@ def navigation(*, available=True) -> NavigationSnapshot:
 
 
 class HudPresentationTests(unittest.TestCase):
+    def test_expanded_hint_hud_renders_without_changing_navigation_state(self) -> None:
+        class HintService:
+            snapshot = PoiHintSnapshot(
+                "hoyolab:1", HintState.CACHED,
+                PoiHint("hoyolab:1", content="Сундук находится под мостом."),
+                message="Кэш",
+            )
+
+        view = object.__new__(DebugMapView)
+        view.details_width = 560
+        view.details_height = 500
+        view._layer_labels = {"floor78": "Великое озеро · B1"}
+        view._hint_service = HintService()
+        view._hint_image_path = None
+        view._hint_image = None
+        view._details_page = 0
+        font_path = Path("C:/Windows/Fonts/arial.ttf")
+        view._unicode_font = ImageFont.truetype(str(font_path), 15)
+        view._unicode_font_large = ImageFont.truetype(str(font_path), 19)
+        view._toast_until = 0.0
+
+        panel = view._render_details_hud(tracker(), navigation(), None)
+
+        self.assertEqual(panel.shape, (500, 560, 3))
+        self.assertGreater(int(panel.sum()), 0)
+
+    def test_details_toggle_and_page_keys_preserve_single_window_mode(self) -> None:
+        view = object.__new__(DebugMapView)
+        view._hint_service = object()
+        view._mode = "hud"
+        view._details_open = False
+        view._details_page = 0
+        view._hold = CollectedHoldController()
+        view._apply_window_mode = lambda: None
+
+        view._dispatch_action(HotkeyAction.TOGGLE_DETAILS, None)
+        view._dispatch_action(HotkeyAction.NEXT_PAGE, None)
+        view._dispatch_action(HotkeyAction.PREVIOUS_PAGE, None)
+
+        self.assertTrue(view._details_open)
+        self.assertEqual(view._details_page, 0)
+        self.assertEqual(view._mode, "hud")
+
+    def test_hint_text_is_paginated_from_safe_presentation(self) -> None:
+        snapshot = PoiHintSnapshot(
+            "hoyolab:1", HintState.CACHED,
+            PoiHint("hoyolab:1", content="Первая строка\nВторая строка", links=("https://example.test/a",)),
+            message="Кэш",
+        )
+
+        lines = DebugMapView._hint_lines(snapshot, 30)
+
+        self.assertIn("Первая строка", lines)
+        self.assertIn("example.test", lines)
+
     def test_global_quit_requests_clean_window_shutdown(self) -> None:
         view = object.__new__(DebugMapView)
         view._quit_requested = False

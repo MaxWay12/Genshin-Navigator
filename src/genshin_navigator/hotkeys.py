@@ -20,6 +20,9 @@ class HotkeyAction(str, Enum):
     TOGGLE_VIEW = "toggle_view"
     TOGGLE_LOCK = "toggle_lock"
     QUIT = "quit"
+    TOGGLE_DETAILS = "toggle_details"
+    PREVIOUS_PAGE = "previous_page"
+    NEXT_PAGE = "next_page"
 
 
 DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {

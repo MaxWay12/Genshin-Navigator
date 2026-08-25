@@ -233,6 +233,19 @@ class AppConfig:
             and self.poi.catalog_path is None
         ):
             raise ValueError("poi.catalog_path is required for the JSON data backend")
+        if self.poi_guidance.enabled:
+            navigation_keys = tuple(self.navigation.hotkeys.__dict__.values())
+            guidance_keys = (
+                self.poi_guidance.toggle_details,
+                self.poi_guidance.previous_page,
+                self.poi_guidance.next_page,
+            )
+            if len(set(navigation_keys + guidance_keys)) != len(
+                navigation_keys + guidance_keys
+            ):
+                raise ValueError(
+                    "navigation and poi_guidance hotkeys must not overlap"
+                )
 
 
 def load_config(path: str | Path) -> AppConfig:

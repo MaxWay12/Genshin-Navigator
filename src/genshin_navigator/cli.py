@@ -6,6 +6,7 @@ import json
 import sqlite3
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import cv2
@@ -36,6 +37,11 @@ from .hoyolab_poi import (
     fetch_points,
 )
 from .position import CoordinateSpace, MapPosition, PositionState
+from .poi_guidance import (
+    HoyoLabPoiHintProvider,
+    PoiHintService,
+    SqlitePoiHintRepository,
+)
 from .screen_gate import MinimapScreenGate
 from .scenario import evaluate_scenario, record_scenario
 from .tracker import LiveTracker
@@ -167,7 +173,10 @@ def _sync_data(config: AppConfig, region_id: str, map_version: str | None) -> di
     provider.replace_content(
         region_id, pois, metrics, content_version=version, assets=assets
     )
-    status = provider.status(region_id)
+    status = provider.status(
+        region_id,
+        hint_refresh_after_days=config.poi_guidance.refresh_after_days,
+    )
     status["sync_stats"] = stats
     return status
 
@@ -383,11 +392,15 @@ def main(argv: list[str] | None = None) -> int:
                     "region_id": region_id, "poi_count": len(data.catalog.pois),
                     "space_count": len(data.catalog.metrics),
                     "collected_count": len(data.progress.collected_ids),
+                    "poi_guidance_cache": "disabled_in_json_backend",
                 }
             else:
                 data = _runtime_data(config)
                 assert data is not None and data.provider is not None
-                report = data.provider.status(region_id)
+                report = data.provider.status(
+                    region_id,
+                    hint_refresh_after_days=config.poi_guidance.refresh_after_days,
+                )
                 report["backend"] = data.backend
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0
@@ -458,6 +471,42 @@ def main(argv: list[str] | None = None) -> int:
                 and config.navigation.enabled
                 else None
             )
+            hint_service = None
+            if config.poi_guidance.enabled and navigation is not None:
+                hint_repository = (
+                    SqlitePoiHintRepository(
+                        config.data.database_path, config.poi_guidance.cache_dir
+                    )
+                    if data is not None and data.backend == "sqlite"
+                    else None
+                )
+                hint_service = PoiHintService(
+                    HoyoLabPoiHintProvider(
+                        map_id=config.data.map_id,
+                        lang=config.data.lang,
+                        timeout_seconds=config.poi_guidance.request_timeout_seconds,
+                    ),
+                    hint_repository,
+                    refresh_after=timedelta(days=config.poi_guidance.refresh_after_days),
+                    negative_after=timedelta(hours=config.poi_guidance.negative_cache_hours),
+                    max_cache_bytes=round(config.poi_guidance.max_cache_mb * 1024 * 1024),
+                )
+            hotkey_virtual_keys = {
+                HotkeyAction.PREVIOUS: config.navigation.hotkeys.previous,
+                HotkeyAction.NEXT: config.navigation.hotkeys.next,
+                HotkeyAction.SKIP: config.navigation.hotkeys.skip,
+                HotkeyAction.COLLECTED_HOLD: config.navigation.hotkeys.collected_hold,
+                HotkeyAction.UNDO: config.navigation.hotkeys.undo,
+                HotkeyAction.TOGGLE_VIEW: config.navigation.hotkeys.toggle_view,
+                HotkeyAction.TOGGLE_LOCK: config.navigation.hotkeys.toggle_lock,
+                HotkeyAction.QUIT: config.navigation.hotkeys.quit,
+            }
+            if config.poi_guidance.enabled:
+                hotkey_virtual_keys.update({
+                    HotkeyAction.TOGGLE_DETAILS: config.poi_guidance.toggle_details,
+                    HotkeyAction.PREVIOUS_PAGE: config.poi_guidance.previous_page,
+                    HotkeyAction.NEXT_PAGE: config.poi_guidance.next_page,
+                })
             view = DebugMapView(
                 load_image(config.debug_map_path),
                 layer_maps,
@@ -473,16 +522,8 @@ def main(argv: list[str] | None = None) -> int:
                 hud_state_path=config.navigation.hud_state_path,
                 collected_hold_seconds=config.navigation.collected_hold_seconds,
                 global_hotkeys=config.navigation.global_hotkeys,
-                hotkey_virtual_keys={
-                    HotkeyAction.PREVIOUS: config.navigation.hotkeys.previous,
-                    HotkeyAction.NEXT: config.navigation.hotkeys.next,
-                    HotkeyAction.SKIP: config.navigation.hotkeys.skip,
-                    HotkeyAction.COLLECTED_HOLD: config.navigation.hotkeys.collected_hold,
-                    HotkeyAction.UNDO: config.navigation.hotkeys.undo,
-                    HotkeyAction.TOGGLE_VIEW: config.navigation.hotkeys.toggle_view,
-                    HotkeyAction.TOGGLE_LOCK: config.navigation.hotkeys.toggle_lock,
-                    HotkeyAction.QUIT: config.navigation.hotkeys.quit,
-                },
+                hotkey_virtual_keys=hotkey_virtual_keys,
+                hint_service=hint_service,
             )
             previous = time.perf_counter()
             try:

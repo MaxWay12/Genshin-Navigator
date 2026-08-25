@@ -351,7 +351,9 @@ class SqliteDataProvider:
                  len(poi_items), len(keys)),
             )
 
-    def status(self, region_id: str = "fontaine") -> dict[str, object]:
+    def status(
+        self, region_id: str = "fontaine", *, hint_refresh_after_days: float = 7.0
+    ) -> dict[str, object]:
         with closing(self._connect()) as connection, connection:
             snapshot = connection.execute(
                 "SELECT * FROM content_snapshots WHERE region_id = ?", (region_id,)
@@ -380,7 +382,9 @@ class SqliteDataProvider:
                 "SELECT COALESCE(SUM(a.size_bytes), 0) FROM poi_hint_assets a JOIN pois p ON p.poi_id=a.poi_id WHERE p.region_id = ?",
                 (region_id,),
             ).fetchone()[0])
-            stale_before = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            stale_before = (
+                datetime.now(timezone.utc) - timedelta(days=hint_refresh_after_days)
+            ).isoformat()
             stale_hint_count = int(connection.execute(
                 "SELECT COUNT(*) FROM poi_hints h JOIN pois p ON p.poi_id=h.poi_id WHERE p.region_id = ? AND h.fetched_at < ?",
                 (region_id, stale_before),

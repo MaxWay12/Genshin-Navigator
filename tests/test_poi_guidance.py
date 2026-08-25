@@ -5,12 +5,17 @@ import tempfile
 import time
 import unittest
 from datetime import timedelta
+from email.message import Message
+from io import BytesIO
 from pathlib import Path
+
+from PIL import Image
 
 from genshin_navigator.data_store import SqliteDataProvider
 from genshin_navigator.poi import MapSpaceMetric, PointOfInterest
 from genshin_navigator.poi_guidance import (
     HintState,
+    HoyoLabPoiHintProvider,
     PoiHint,
     PoiHintService,
     SqlitePoiHintRepository,
@@ -38,6 +43,23 @@ class FakeProvider:
 
     def download_image(self, url: str):
         raise OSError("offline image")
+
+
+class FakeResponse:
+    def __init__(self, body: bytes, content_type: str):
+        self.body = body
+        self.headers = Message()
+        self.headers["Content-Type"] = content_type
+        self.headers["Content-Length"] = str(len(body))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, limit=None):
+        return self.body if limit is None else self.body[:limit]
 
 
 class PoiGuidanceTests(unittest.TestCase):
@@ -75,6 +97,28 @@ class PoiGuidanceTests(unittest.TestCase):
         self.assertEqual(hint.video_url, "https://example.test/video")
         self.assertNotIn("<", hint.content)
 
+    def test_provider_uses_public_point_info_contract_and_validates_image(self) -> None:
+        seen_urls: list[str] = []
+        payload = b'{"retcode":0,"data":{"info":{"id":10,"content":"hint"}}}'
+        image_buffer = BytesIO()
+        Image.new("RGB", (3, 2), "red").save(image_buffer, format="PNG")
+
+        def opener(request, timeout):
+            seen_urls.append(request.full_url)
+            if "point/info" in request.full_url:
+                return FakeResponse(payload, "application/json")
+            return FakeResponse(image_buffer.getvalue(), "image/png")
+
+        provider = HoyoLabPoiHintProvider(opener=opener)
+        hint = provider.fetch("hoyolab:10")
+        body, mime, suffix = provider.download_image("https://example.test/a.png")
+
+        self.assertEqual(hint.content, "hint")
+        self.assertIn("point_id=10", seen_urls[0])
+        self.assertIn("app_sn=ys_obc", seen_urls[0])
+        self.assertEqual((mime, suffix), ("image/png", ".png"))
+        self.assertEqual(body, image_buffer.getvalue())
+
     def test_rejects_bad_payload_and_mismatched_id(self) -> None:
         with self.assertRaises(ValueError):
             parse_point_info({"retcode": 1, "message": "bad"}, "hoyolab:10")
@@ -95,6 +139,23 @@ class PoiGuidanceTests(unittest.TestCase):
             self.assertEqual(remote.fetches, [])
         finally:
             service.close()
+
+    def test_image_survives_reopen_and_lru_prune_only_removes_known_asset(self) -> None:
+        image_buffer = BytesIO()
+        Image.new("RGB", (3, 2), "blue").save(image_buffer, format="PNG")
+        self.repository.put(
+            PoiHint("hoyolab:10", image_url="https://example.test/a.png"),
+            (image_buffer.getvalue(), "image/png", ".png"),
+        )
+        cached = SqlitePoiHintRepository(
+            self.database, self.root / "cache"
+        ).get("hoyolab:10")
+
+        self.assertIsNotNone(cached.image_path)
+        self.assertTrue(cached.image_path.exists())
+        self.repository.prune(0)
+        self.assertFalse(cached.image_path.exists())
+        self.assertIsNone(self.repository.get("hoyolab:10").image_path)
 
     def test_stale_cache_is_visible_while_refreshing(self) -> None:
         self.repository.put(PoiHint("hoyolab:10", content="old"))
@@ -135,6 +196,24 @@ class PoiGuidanceTests(unittest.TestCase):
                 time.sleep(0.01)
             self.assertEqual(result.poi_id, "hoyolab:11")
             self.assertEqual(result.hint.content, "second")
+        finally:
+            service.close()
+
+    def test_slow_network_request_returns_immediately(self) -> None:
+        remote = FakeProvider(
+            {"hoyolab:10": PoiHint("hoyolab:10", content="later")}, delay=0.1
+        )
+        service = PoiHintService(remote, self.repository)
+        try:
+            started = time.perf_counter()
+            result = service.request(self.pois[0])
+            elapsed = time.perf_counter() - started
+            self.assertEqual(result.state, HintState.LOADING)
+            self.assertLess(elapsed, 0.05)
+            for _ in range(100):
+                if service.poll().state is HintState.READY:
+                    break
+                time.sleep(0.01)
         finally:
             service.close()
 

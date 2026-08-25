@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import textwrap
 import time
 from math import cos, radians, sin
 from pathlib import Path
@@ -13,6 +14,7 @@ from .hotkeys import CollectedHoldController, GlobalHotkeyManager, HotkeyAction
 from .hud import HudStateStore, WindowGeometry, build_hud_presentation
 from .navigation import NavigationController, NavigationSnapshot
 from .poi import PointOfInterest, PoiRepository, ProgressRepository
+from .poi_guidance import HintState, PoiHintService, PoiHintSnapshot
 from .tracker import TrackerSnapshot, TrackerState
 
 
@@ -60,6 +62,9 @@ class DebugMapView:
         global_hotkeys: bool = True,
         hotkey_virtual_keys: dict[HotkeyAction, int] | None = None,
         hotkey_manager: GlobalHotkeyManager | None = None,
+        hint_service: PoiHintService | None = None,
+        details_width: int = 560,
+        details_height: int = 500,
     ):
         if atlas is None or atlas.size == 0:
             raise ValueError("Debug atlas is empty")
@@ -68,7 +73,15 @@ class DebugMapView:
         self.max_height = max_height
         self.hud_width = hud_width
         self.hud_height = hud_height
+        self.details_width = details_width
+        self.details_height = details_height
         self._mode = default_view
+        self._details_open = False
+        self._details_page = 0
+        self._hint_target_id: str | None = None
+        self._hint_service = hint_service
+        self._hint_image_path: Path | None = None
+        self._hint_image: np.ndarray | None = None
         self._locked = True
         self._layers = {"surface": atlas}
         self._layers.update(layer_maps or {})
@@ -111,6 +124,11 @@ class DebugMapView:
             if self._hotkeys.registration_errors:
                 keys = ", ".join(action.value for action in self._hotkeys.registration_errors)
                 self._show_toast(f"Конфликт клавиш: {keys}", 6.0)
+        try:
+            if not bool(ctypes.windll.shell32.IsUserAnAdmin()):
+                self._show_toast("Если Genshin запущен администратором, запустите Navigator так же", 7.0)
+        except (AttributeError, OSError):
+            pass
 
     @property
     def mode(self) -> str:
@@ -174,17 +192,37 @@ class DebugMapView:
             geometry = self._window_geometry()
             self._set_locked_style(True)
             if geometry is not None:
-                self._state_store.save(geometry)
+                self._state_store.save(WindowGeometry(geometry.x, geometry.y, self.hud_width, self.hud_height))
             self._show_toast("Положение HUD сохранено")
 
     def _toggle_view(self) -> None:
         self._mode = "map" if self._mode == "hud" else "hud"
         self._apply_window_mode()
-        self._show_toast("Полная карта" if self._mode == "map" else "Компактный HUD")
+        self._show_toast(
+            "Полная карта"
+            if self._mode == "map"
+            else "Подсказка POI" if self._details_open else "Компактный HUD"
+        )
+
+    def _toggle_details(self) -> None:
+        if self._hint_service is None:
+            self._show_toast("Подсказки отключены")
+            return
+        if self._mode == "map":
+            self._mode = "hud"
+            self._details_open = True
+        else:
+            self._details_open = not self._details_open
+        self._details_page = 0
+        self._apply_window_mode()
 
     def _apply_window_mode(self) -> None:
         if self._mode == "hud":
-            cv2.resizeWindow(self.window_name, self.hud_width, self.hud_height)
+            size = (
+                (self.details_width, self.details_height)
+                if self._details_open else (self.hud_width, self.hud_height)
+            )
+            cv2.resizeWindow(self.window_name, *size)
         elif self.base.size:
             cv2.resizeWindow(self.window_name, self.base.shape[1], self.base.shape[0] + 112)
 
@@ -220,6 +258,15 @@ class DebugMapView:
         if action is HotkeyAction.TOGGLE_LOCK:
             self._hold.cancel()
             self._toggle_lock()
+            return
+        if action is HotkeyAction.TOGGLE_DETAILS:
+            self._hold.cancel()
+            self._toggle_details()
+            return
+        if action in {HotkeyAction.PREVIOUS_PAGE, HotkeyAction.NEXT_PAGE}:
+            if self._mode == "hud" and self._details_open:
+                delta = -1 if action is HotkeyAction.PREVIOUS_PAGE else 1
+                self._details_page = max(0, self._details_page + delta)
             return
         if self._navigation is None:
             return
@@ -269,6 +316,9 @@ class DebugMapView:
             ord("s"): HotkeyAction.SKIP, ord("S"): HotkeyAction.SKIP,
             ord("u"): HotkeyAction.UNDO, ord("U"): HotkeyAction.UNDO,
             ord("0"): HotkeyAction.TOGGLE_VIEW, ord("."): HotkeyAction.TOGGLE_LOCK,
+            ord("7"): HotkeyAction.TOGGLE_DETAILS,
+            ord("1"): HotkeyAction.PREVIOUS_PAGE,
+            ord("3"): HotkeyAction.NEXT_PAGE,
         }
         if key in (ord("m"), ord("M")) and self._navigation is not None:
             self._navigation.mark_collected()
@@ -278,9 +328,22 @@ class DebugMapView:
         for action in self._hotkeys.poll() if self._hotkeys is not None else []:
             self._dispatch_action(action, navigation)
         navigation = self._navigation.update(snapshot) if self._navigation else None
+        if self._details_open and self._hint_service is not None:
+            target = navigation.target if navigation is not None else None
+            target_id = target.id if target is not None else None
+            if target_id != self._hint_target_id:
+                self._hint_target_id = target_id
+                self._details_page = 0
+            self._hint_service.request(target)
         self._update_hold(navigation)
         navigation = self._navigation.update(snapshot) if self._navigation else None
-        canvas = self._render_hud(snapshot, navigation, paused_reason) if self._mode == "hud" else self._render_map(snapshot, navigation, fps, paused_reason)
+        if self._mode == "hud":
+            canvas = (
+                self._render_details_hud(snapshot, navigation, paused_reason)
+                if self._details_open else self._render_hud(snapshot, navigation, paused_reason)
+            )
+        else:
+            canvas = self._render_map(snapshot, navigation, fps, paused_reason)
         cv2.imshow(self.window_name, canvas)
         try:
             visible = cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) >= 1
@@ -297,7 +360,7 @@ class DebugMapView:
         self._put_unicode_text(panel, presentation.distance, (16, 44), accent)
         self._put_unicode_text(panel, presentation.layer[:43], (16, 70), (190, 195, 200))
         self._put_unicode_text(panel, "ПАУЗА" if paused_reason else presentation.state, (16, 96), accent)
-        self._put_unicode_text(panel, "4/6 цель  2 skip  5 держать  8 undo  0 карта  9 выход", (16, self.hud_height - 23), (145, 150, 155))
+        self._put_unicode_text(panel, "4/6 цель · 7 подсказка · 5 собрать · 0 карта · 9 выход", (16, self.hud_height - 23), (145, 150, 155))
         if presentation.bearing_degrees is not None:
             self._draw_hud_arrow(panel, presentation.bearing_degrees, accent)
         if self._hold_progress > 0:
@@ -306,6 +369,72 @@ class DebugMapView:
         if time.monotonic() < self._toast_until:
             cv2.rectangle(panel, (7, 91), (self.hud_width - 7, 119), (42, 45, 50), -1)
             self._put_unicode_text(panel, self._toast[:45], (14, 95), (245, 220, 170))
+        return panel
+
+    @staticmethod
+    def _hint_lines(hint: PoiHintSnapshot, width: int) -> list[str]:
+        if hint.hint is None:
+            return textwrap.wrap(
+                hint.message or "Подсказка отсутствует", width=max(20, width)
+            )
+        body = hint.hint.content or "У официальной карты нет текстового описания."
+        lines: list[str] = []
+        for paragraph in body.splitlines() or [body]:
+            lines.extend(textwrap.wrap(paragraph, width=max(20, width)) or [""])
+        if hint.hint.links:
+            lines.append("")
+            lines.append(f"Ссылки: {len(hint.hint.links)}")
+            lines.extend(urllib_domain(url) for url in hint.hint.links)
+        if hint.hint.video_url:
+            lines.append("Видео: доступно на HoYoLAB")
+        return lines
+
+    def _render_details_hud(
+        self,
+        snapshot: TrackerSnapshot,
+        navigation: NavigationSnapshot | None,
+        paused_reason: str | None,
+    ) -> np.ndarray:
+        panel = np.full((self.details_height, self.details_width, 3), (24, 27, 31), np.uint8)
+        presentation = build_hud_presentation(snapshot, navigation, self._layer_labels)
+        accent = (85, 220, 110) if presentation.available and not paused_reason else (145, 145, 145)
+        cv2.rectangle(panel, (0, 0), (5, self.details_height), accent, -1)
+        self._put_unicode_text(panel, presentation.target[:58], (16, 10), (238, 238, 238), large=True)
+        self._put_unicode_text(panel, f"{presentation.distance} · {presentation.layer}"[:70], (16, 42), accent)
+        hint = self._hint_service.snapshot if self._hint_service is not None else PoiHintSnapshot(None, HintState.UNAVAILABLE)
+        self._put_unicode_text(panel, hint.message or hint.state.value, (16, 69), (190, 195, 200))
+
+        image_x, image_y, image_w, image_h = 16, 103, 224, 310
+        image = None
+        if hint.image_path is not None:
+            if hint.image_path != self._hint_image_path:
+                self._hint_image_path = hint.image_path
+                self._hint_image = cv2.imread(str(hint.image_path), cv2.IMREAD_COLOR)
+            image = self._hint_image
+        if image is not None and image.size:
+            height, width = image.shape[:2]
+            scale = min(image_w / width, image_h / height, 1.0)
+            resized = cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
+            y2, x2 = image_y + resized.shape[0], image_x + resized.shape[1]
+            panel[image_y:y2, image_x:x2] = resized
+            text_x, line_width = 258, 35
+        else:
+            cv2.rectangle(panel, (image_x, image_y), (image_x + image_w, image_y + 120), (52, 56, 62), 1)
+            self._put_unicode_text(panel, "Изображения нет", (image_x + 43, image_y + 48), (145, 150, 155))
+            text_x, line_width = 258, 35
+
+        lines = self._hint_lines(hint, line_width)
+        per_page = max(1, (self.details_height - 135) // 22)
+        pages = max(1, (len(lines) + per_page - 1) // per_page)
+        self._details_page = min(self._details_page, pages - 1)
+        shown = lines[self._details_page * per_page:(self._details_page + 1) * per_page]
+        for index, line in enumerate(shown):
+            self._put_unicode_text(panel, line, (text_x, 103 + index * 22), (220, 222, 224))
+        footer = f"Num1/3 страница {self._details_page + 1}/{pages}  Num7 закрыть  Num4/6 цель  Num9 выход"
+        self._put_unicode_text(panel, footer, (16, self.details_height - 25), (145, 150, 155))
+        if time.monotonic() < self._toast_until:
+            cv2.rectangle(panel, (7, self.details_height - 62), (self.details_width - 7, self.details_height - 34), (42, 45, 50), -1)
+            self._put_unicode_text(panel, self._toast[:65], (14, self.details_height - 58), (245, 220, 170))
         return panel
 
     def _render_map(self, snapshot: TrackerSnapshot, navigation: NavigationSnapshot | None, fps: float, paused_reason: str | None) -> np.ndarray:
@@ -380,8 +509,15 @@ class DebugMapView:
         if self._locked and self._mode == "hud":
             geometry = self._window_geometry()
             if geometry is not None:
-                self._state_store.save(geometry)
+                self._state_store.save(WindowGeometry(geometry.x, geometry.y, self.hud_width, self.hud_height))
+        if self._hint_service is not None:
+            self._hint_service.close()
         try:
             cv2.destroyWindow(self.window_name)
         except cv2.error:
             pass
+
+
+def urllib_domain(url: str) -> str:
+    from urllib.parse import urlparse
+    return urlparse(url).netloc or url

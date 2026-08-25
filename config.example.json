@@ -86,5 +86,18 @@
       "toggle_lock": 110,
       "quit": 105
     }
+  },
+  "poi_guidance": {
+    "enabled": true,
+    "cache_dir": "datasets/local/cache/poi",
+    "refresh_after_days": 7,
+    "negative_cache_hours": 24,
+    "max_cache_mb": 256,
+    "request_timeout_seconds": 8,
+    "hotkeys": {
+      "toggle_details": 103,
+      "previous_page": 97,
+      "next_page": 99
+    }
   }
 }

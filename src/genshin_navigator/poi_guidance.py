@@ -451,7 +451,12 @@ class PoiHintService:
                     self._snapshot = PoiHintSnapshot(poi_id, HintState.ERROR, message=f"Подсказка недоступна: {error}")
             return self._snapshot
         if poi_id == self._snapshot.poi_id:
-            message = "У HoYoLAB нет подсказки" if cached.hint.empty else "HoYoLAB · сохранено офлайн"
+            if cached.hint.empty:
+                message = "У HoYoLAB нет подсказки"
+            elif self.repository is None:
+                message = "Онлайн · JSON-режим без постоянного кэша"
+            else:
+                message = "HoYoLAB · сохранено офлайн"
             self._snapshot = PoiHintSnapshot(poi_id, HintState.READY, cached.hint, cached.image_path, message)
         return self._snapshot
 
