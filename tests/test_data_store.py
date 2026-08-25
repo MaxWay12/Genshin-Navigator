@@ -62,6 +62,29 @@ class SqliteDataProviderTests(unittest.TestCase):
         self.assertEqual(reopened.catalog().pois[0].id, "one")
         self.assertEqual(reopened.status()["schema_version"], SCHEMA_VERSION)
 
+    def test_migrates_v1_to_v2_without_losing_content_or_progress(self) -> None:
+        provider = SqliteDataProvider(self.database)
+        provider.replace_content(
+            "fontaine", [poi("one")], [metric()], content_version="fixture-1"
+        )
+        provider.progress().mark_collected("one")
+        with closing(sqlite3.connect(self.database)) as connection, connection:
+            connection.execute("DROP TABLE poi_hint_assets")
+            connection.execute("DROP TABLE poi_hints")
+            connection.execute("PRAGMA user_version = 1")
+
+        migrated = SqliteDataProvider(self.database)
+
+        self.assertEqual(migrated.catalog().pois[0].id, "one")
+        self.assertEqual(migrated.progress().collected_ids, {"one"})
+        self.assertEqual(migrated.status()["schema_version"], 2)
+        with closing(sqlite3.connect(self.database)) as connection:
+            tables = {row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+        self.assertIn("poi_hints", tables)
+        self.assertIn("poi_hint_assets", tables)
+
     def test_auto_imports_legacy_catalog_and_progress_once(self) -> None:
         catalog_path = self.root / "catalog.json"
         progress_path = self.root / "progress.json"

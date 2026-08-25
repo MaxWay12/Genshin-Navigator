@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import sqlite3
+import tempfile
+import time
+import unittest
+from datetime import timedelta
+from pathlib import Path
+
+from genshin_navigator.data_store import SqliteDataProvider
+from genshin_navigator.poi import MapSpaceMetric, PointOfInterest
+from genshin_navigator.poi_guidance import (
+    HintState,
+    PoiHint,
+    PoiHintService,
+    SqlitePoiHintRepository,
+    official_point_id,
+    parse_point_info,
+    plain_text,
+)
+from genshin_navigator.position import CoordinateSpace
+
+
+class FakeProvider:
+    def __init__(self, hints: dict[str, PoiHint], delay: float = 0.0):
+        self.hints = hints
+        self.delay = delay
+        self.fetches: list[str] = []
+
+    def fetch(self, poi_id: str) -> PoiHint:
+        self.fetches.append(poi_id)
+        if self.delay:
+            time.sleep(self.delay)
+        value = self.hints[poi_id]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def download_image(self, url: str):
+        raise OSError("offline image")
+
+
+class PoiGuidanceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.database = self.root / "navigator.db"
+        provider = SqliteDataProvider(self.database)
+        metric = MapSpaceMetric(
+            "fontaine", "surface", CoordinateSpace.SURFACE_ATLAS,
+            ((1.0, 0.0), (0.0, 1.0)),
+        )
+        self.pois = [
+            PointOfInterest("hoyolab:10", "chest", "A", "fontaine", "surface", CoordinateSpace.SURFACE_ATLAS, 1, 2),
+            PointOfInterest("hoyolab:11", "chest", "B", "fontaine", "surface", CoordinateSpace.SURFACE_ATLAS, 3, 4),
+        ]
+        provider.replace_content("fontaine", self.pois, [metric], content_version="test")
+        self.repository = SqlitePoiHintRepository(self.database, self.root / "cache")
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_parses_and_sanitizes_official_point_info(self) -> None:
+        hint = parse_point_info(
+            {"retcode": 0, "data": {"info": {
+                "id": 10, "content": "<p>Под <b>мостом</b><br>рядом</p>",
+                "img": "https://example.test/a.png",
+                "url_list": [{"url": "https://example.test/guide"}, "javascript:bad"],
+                "video": {"url": "https://example.test/video"},
+            }, "last_update_time": "2026-01-01 10:00:00"}},
+            "hoyolab:10",
+        )
+        self.assertEqual(hint.content, "Под мостом\nрядом")
+        self.assertEqual(hint.links, ("https://example.test/guide",))
+        self.assertEqual(hint.video_url, "https://example.test/video")
+        self.assertNotIn("<", hint.content)
+
+    def test_rejects_bad_payload_and_mismatched_id(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_point_info({"retcode": 1, "message": "bad"}, "hoyolab:10")
+        with self.assertRaises(ValueError):
+            parse_point_info({"retcode": 0, "data": {"info": {"id": 99}}}, "hoyolab:10")
+        self.assertIsNone(official_point_id("custom:10"))
+        self.assertEqual(plain_text("<script>x</script>safe"), "safe")
+
+    def test_repository_round_trip_and_cache_hit_avoids_network(self) -> None:
+        cached = self.repository.put(PoiHint("hoyolab:10", content="cached"))
+        self.assertEqual(cached.hint.content, "cached")
+        remote = FakeProvider({"hoyolab:10": PoiHint("hoyolab:10", content="remote")})
+        service = PoiHintService(remote, self.repository)
+        try:
+            snapshot = service.request(self.pois[0])
+            self.assertEqual(snapshot.state, HintState.CACHED)
+            self.assertEqual(snapshot.hint.content, "cached")
+            self.assertEqual(remote.fetches, [])
+        finally:
+            service.close()
+
+    def test_stale_cache_is_visible_while_refreshing(self) -> None:
+        self.repository.put(PoiHint("hoyolab:10", content="old"))
+        connection = sqlite3.connect(self.database)
+        try:
+            connection.execute("UPDATE poi_hints SET fetched_at='2000-01-01T00:00:00+00:00'")
+            connection.commit()
+        finally:
+            connection.close()
+        remote = FakeProvider({"hoyolab:10": PoiHint("hoyolab:10", content="new")})
+        service = PoiHintService(remote, self.repository, refresh_after=timedelta(days=1))
+        try:
+            initial = service.request(self.pois[0])
+            self.assertEqual(initial.hint.content, "old")
+            self.assertEqual(initial.state, HintState.CACHED)
+            for _ in range(100):
+                result = service.poll()
+                if result.state is HintState.READY:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(result.hint.content, "new")
+        finally:
+            service.close()
+
+    def test_result_for_previous_target_is_not_applied(self) -> None:
+        remote = FakeProvider({
+            "hoyolab:10": PoiHint("hoyolab:10", content="first"),
+            "hoyolab:11": PoiHint("hoyolab:11", content="second"),
+        }, delay=0.03)
+        service = PoiHintService(remote, self.repository)
+        try:
+            service.request(self.pois[0])
+            service.request(self.pois[1])
+            for _ in range(100):
+                result = service.poll()
+                if result.state is HintState.READY:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(result.poi_id, "hoyolab:11")
+            self.assertEqual(result.hint.content, "second")
+        finally:
+            service.close()
+
+    def test_network_failure_does_not_replace_stale_cache(self) -> None:
+        self.repository.put(PoiHint("hoyolab:10", content="offline copy"))
+        connection = sqlite3.connect(self.database)
+        try:
+            connection.execute("UPDATE poi_hints SET fetched_at='2000-01-01T00:00:00+00:00'")
+            connection.commit()
+        finally:
+            connection.close()
+        remote = FakeProvider({"hoyolab:10": OSError("offline")})  # type: ignore[dict-item]
+        service = PoiHintService(remote, self.repository, refresh_after=timedelta(seconds=1))
+        try:
+            service.request(self.pois[0])
+            for _ in range(100):
+                result = service.poll()
+                if result.state is HintState.OFFLINE:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(result.state, HintState.OFFLINE)
+            self.assertEqual(result.hint.content, "offline copy")
+        finally:
+            service.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

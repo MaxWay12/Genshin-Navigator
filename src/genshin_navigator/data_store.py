@@ -5,7 +5,7 @@ import os
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -13,7 +13,7 @@ from .poi import MapSpaceMetric, PoiCatalog, PoiProgress, PointOfInterest
 from .position import CoordinateSpace
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SOURCE_NAME = "HoYoLAB Interactive Map"
 SOURCE_URL = "https://act.hoyolab.com/ys/app/interactive-map/index.html#/map/2"
 
@@ -99,7 +99,7 @@ class SqliteDataProvider:
     def _initialize(self) -> None:
         with closing(self._connect()) as connection, connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, SCHEMA_VERSION):
+            if version not in (0, 1, SCHEMA_VERSION):
                 raise ValueError(
                     f"Unsupported data schema version {version}; expected {SCHEMA_VERSION}"
                 )
@@ -158,6 +158,30 @@ class SqliteDataProvider:
                     PRIMARY KEY(region_id, layer_id, kind, path),
                     FOREIGN KEY(region_id) REFERENCES regions(region_id)
                 );
+                CREATE TABLE IF NOT EXISTS poi_hints(
+                    poi_id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL DEFAULT '',
+                    image_url TEXT,
+                    links_json TEXT NOT NULL DEFAULT '[]',
+                    video_url TEXT,
+                    source_updated_at TEXT,
+                    source TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    is_empty INTEGER NOT NULL DEFAULT 0 CHECK(is_empty IN (0, 1)),
+                    FOREIGN KEY(poi_id) REFERENCES pois(poi_id)
+                );
+                CREATE TABLE IF NOT EXISTS poi_hint_assets(
+                    poi_id TEXT PRIMARY KEY,
+                    relative_path TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    last_accessed_at TEXT NOT NULL,
+                    FOREIGN KEY(poi_id) REFERENCES pois(poi_id)
+                );
+                CREATE INDEX IF NOT EXISTS poi_hint_assets_lru
+                    ON poi_hint_assets(last_accessed_at);
                 """
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -344,6 +368,23 @@ class SqliteDataProvider:
             asset_rows = connection.execute(
                 "SELECT path FROM assets WHERE region_id = ?", (region_id,)
             ).fetchall()
+            hint_count = int(connection.execute(
+                "SELECT COUNT(*) FROM poi_hints h JOIN pois p ON p.poi_id=h.poi_id WHERE p.region_id = ?",
+                (region_id,),
+            ).fetchone()[0])
+            hint_image_count = int(connection.execute(
+                "SELECT COUNT(*) FROM poi_hint_assets a JOIN pois p ON p.poi_id=a.poi_id WHERE p.region_id = ?",
+                (region_id,),
+            ).fetchone()[0])
+            hint_cache_bytes = int(connection.execute(
+                "SELECT COALESCE(SUM(a.size_bytes), 0) FROM poi_hint_assets a JOIN pois p ON p.poi_id=a.poi_id WHERE p.region_id = ?",
+                (region_id,),
+            ).fetchone()[0])
+            stale_before = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            stale_hint_count = int(connection.execute(
+                "SELECT COUNT(*) FROM poi_hints h JOIN pois p ON p.poi_id=h.poi_id WHERE p.region_id = ? AND h.fetched_at < ?",
+                (region_id, stale_before),
+            ).fetchone()[0])
         asset_paths = [str(row["path"]) for row in asset_rows]
         missing_assets = []
         for stored_path in asset_paths:
@@ -363,6 +404,10 @@ class SqliteDataProvider:
             "asset_count": len(asset_paths),
             "missing_asset_count": len(missing_assets),
             "missing_assets": missing_assets,
+            "cached_hint_count": hint_count,
+            "cached_hint_image_count": hint_image_count,
+            "hint_cache_bytes": hint_cache_bytes,
+            "stale_hint_count": stale_hint_count,
         }
 
 

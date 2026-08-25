@@ -11,6 +11,7 @@ from .poi import (
     PoiRepository,
     ProgressRepository,
 )
+from .poi_guidance import PoiHint, PoiHintProvider, PoiHintRepository, PoiHintService
 from .pyramid import PyramidLevel, PyramidMatcher, load_pyramid
 
 __all__ = [
@@ -25,6 +26,10 @@ __all__ = [
     "PoiProgress",
     "PointOfInterest",
     "PoiRepository",
+    "PoiHint",
+    "PoiHintProvider",
+    "PoiHintRepository",
+    "PoiHintService",
     "ProgressRepository",
     "PositionState",
     "PyramidLevel",

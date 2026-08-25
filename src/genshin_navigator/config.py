@@ -163,6 +163,30 @@ class NavigationConfig:
 
 
 @dataclass(frozen=True)
+class PoiGuidanceConfig:
+    enabled: bool = True
+    cache_dir: Path = Path("datasets/local/cache/poi")
+    refresh_after_days: float = 7.0
+    negative_cache_hours: float = 24.0
+    max_cache_mb: float = 256.0
+    request_timeout_seconds: float = 8.0
+    toggle_details: int = 0x67
+    previous_page: int = 0x61
+    next_page: int = 0x63
+
+    def __post_init__(self) -> None:
+        if self.refresh_after_days <= 0 or self.negative_cache_hours <= 0:
+            raise ValueError("poi_guidance cache ages must be positive")
+        if self.max_cache_mb <= 0 or self.request_timeout_seconds <= 0:
+            raise ValueError("poi_guidance size and timeout must be positive")
+        keys = (self.toggle_details, self.previous_page, self.next_page)
+        if any(not 1 <= value <= 0xFE for value in keys):
+            raise ValueError("poi_guidance hotkeys must be Windows virtual-key codes")
+        if len(set(keys)) != len(keys):
+            raise ValueError("poi_guidance hotkeys must be unique")
+
+
+@dataclass(frozen=True)
 class DataConfig:
     storage_backend: str = "auto"
     database_path: Path = Path("datasets/local/data/genshin_navigator.db")
@@ -199,6 +223,7 @@ class AppConfig:
     screen_gate: ScreenGateConfig = field(default_factory=ScreenGateConfig)
     poi: PoiConfig = field(default_factory=PoiConfig)
     navigation: NavigationConfig = field(default_factory=NavigationConfig)
+    poi_guidance: PoiGuidanceConfig = field(default_factory=PoiGuidanceConfig)
     data: DataConfig = field(default_factory=DataConfig)
 
     def __post_init__(self) -> None:
@@ -260,6 +285,15 @@ def load_config(path: str | Path) -> AppConfig:
     if not hud_state_path.is_absolute():
         hud_state_path = (config_path.parent / hud_state_path).resolve()
 
+    guidance_raw = dict(raw.get("poi_guidance", {}))
+    guidance_cache_value = guidance_raw.pop(
+        "cache_dir", "datasets/local/cache/poi"
+    )
+    guidance_cache_dir = Path(guidance_cache_value)
+    if not guidance_cache_dir.is_absolute():
+        guidance_cache_dir = (config_path.parent / guidance_cache_dir).resolve()
+    guidance_hotkeys = dict(guidance_raw.pop("hotkeys", {}))
+
     data_raw = dict(raw.get("data", {}))
     database_value = data_raw.pop(
         "database_path", "datasets/local/data/genshin_navigator.db"
@@ -306,6 +340,13 @@ def load_config(path: str | Path) -> AppConfig:
             hud_state_path=hud_state_path,
             hotkeys=HotkeyConfig(**hotkeys_raw),
             **navigation_raw,
+        ),
+        poi_guidance=PoiGuidanceConfig(
+            cache_dir=guidance_cache_dir,
+            toggle_details=int(guidance_hotkeys.pop("toggle_details", 0x67)),
+            previous_page=int(guidance_hotkeys.pop("previous_page", 0x61)),
+            next_page=int(guidance_hotkeys.pop("next_page", 0x63)),
+            **guidance_raw,
         ),
         data=DataConfig(
             database_path=database_path,
