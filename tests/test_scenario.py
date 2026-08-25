@@ -106,6 +106,7 @@ class ScenarioTests(unittest.TestCase):
 
             self.assertEqual(manifest["format_version"], 1)
             self.assertIn("full game frames are never written", manifest["privacy"])
+            self.assertEqual(manifest["compatibility"]["genshin_ui_scale"], "unknown")
             timestamps = [item["timestamp_seconds"] for item in manifest["frames"]]
             self.assertEqual(timestamps, [0.0, 0.1, 0.2])
             saved = cv2.imread(str(root / manifest["frames"][0]["image"]))

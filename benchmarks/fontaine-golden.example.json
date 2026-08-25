@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "name": "fontaine-golden",
+  "kpis": {
+    "max_false_locks": 0,
+    "max_wrong_layer_positions": 0,
+    "max_reacquire_seconds": 3.0,
+    "max_one_frame_layer_runs": 0,
+    "max_stationary_jitter_p95_px": 5.0
+  },
+  "scenarios": [
+    {
+      "name": "surface teleport",
+      "path": "../datasets/local/scenarios/surface_teleport",
+      "gating": true
+    },
+    {
+      "name": "underground stationary",
+      "path": "../datasets/local/scenarios/underground_stationary",
+      "gating": true
+    },
+    {
+      "name": "known layer transition recording",
+      "path": "../datasets/local/scenarios/layer_transition",
+      "gating": false
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Genshin Navigator benchmark suite v1",
+  "type": "object",
+  "required": ["format_version", "scenarios"],
+  "properties": {
+    "format_version": {"const": 1},
+    "name": {"type": "string"},
+    "kpis": {"type": "object"},
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "gating"],
+        "properties": {
+          "name": {"type": "string"},
+          "path": {"type": "string"},
+          "gating": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

@@ -154,6 +154,20 @@ Copy-Item config.example.json config.json
 Новый формат v4 включает состояния tracker и до пяти лучших кандидатов каждого
 кадра. Replay сохраняет совместимость со старыми bundle v3.
 
+### Golden benchmark
+
+Suite объединяет stateful-сценарии и возвращает код `2`, если gating-сценарий
+нарушил hard KPI. Известные проблемные записи можно оставить `gating: false`, не
+скрывая их результат:
+
+```powershell
+.venv\Scripts\genshin-navigator benchmark-suite benchmarks/fontaine-golden.example.json --config config.json --report datasets/local/benchmarks/fontaine-golden.json
+```
+
+По умолчанию проверяются: ноль false lock, ноль уверенных неправильных слоёв,
+reacquire не более 3 секунд, отсутствие однокадровой смены слоя и stationary jitter
+P95 не более 5 px. Реальные crops и отчёты остаются в `datasets/local`.
+
 1. Поместите цельное изображение карты в `assets/world_map.png`. Оно должно быть
    того же визуального стиля и масштаба, что и содержимое миникарты.
 2. Сохраните тестовый снимок рабочего стола:

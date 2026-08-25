@@ -13,6 +13,7 @@ import numpy as np
 
 from .calibration import CalibrationSession
 from .application import LiveApplication, build_locator, load_runtime_data
+from .benchmark_suite import run_benchmark_suite, write_report_atomic
 from .capture import crop_roi, grab_screen, load_image, save_screen
 from .config import AppConfig, load_config
 from .data_store import (
@@ -77,6 +78,8 @@ def _parser() -> argparse.ArgumentParser:
     record_sequence.add_argument("--expected-start-layer")
     record_sequence.add_argument("--expected-end-layer")
     record_sequence.add_argument("--stationary-last-seconds", type=float, default=0.0)
+    record_sequence.add_argument("--ui-scale", default="unknown")
+    record_sequence.add_argument("--graphics-preset", default="unknown")
 
     evaluate_sequence = subparsers.add_parser(
         "evaluate-sequence",
@@ -85,6 +88,15 @@ def _parser() -> argparse.ArgumentParser:
     evaluate_sequence.add_argument("scenario", help="Directory containing scenario.json")
     evaluate_sequence.add_argument("--config", default="config.json")
     evaluate_sequence.add_argument("--report", help="Optional JSON report path")
+
+    suite = subparsers.add_parser(
+        "benchmark-suite", help="Run a versioned golden scenario suite"
+    )
+    suite.add_argument("manifest")
+    suite.add_argument("--config", default="config.json")
+    suite.add_argument("--report", required=True)
+    suite.add_argument("--ui-scale", default="unknown")
+    suite.add_argument("--graphics-preset", default="unknown")
 
     calibrate = subparsers.add_parser(
         "calibrate-distance",
@@ -554,6 +566,8 @@ def main(argv: list[str] | None = None) -> int:
                 expected_start_layer=args.expected_start_layer,
                 expected_end_layer=args.expected_end_layer,
                 stationary_last_seconds=args.stationary_last_seconds,
+                genshin_ui_scale=args.ui_scale,
+                graphics_preset=args.graphics_preset,
             )
             print(manifest)
             return 0
@@ -583,6 +597,17 @@ def main(argv: list[str] | None = None) -> int:
                 report_path.write_text(rendered, encoding="utf-8")
             print(rendered)
             return 0 if report["passed"] is not False else 2
+        if args.command == "benchmark-suite":
+            report = run_benchmark_suite(
+                args.manifest,
+                config,
+                matcher,
+                ui_scale=args.ui_scale,
+                graphics_preset=args.graphics_preset,
+            )
+            write_report_atomic(report, args.report)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["passed"] else 2
         if args.command == "locate":
             result = _locate_once(config, matcher, args.screenshot)
             print(json.dumps(result, ensure_ascii=False))

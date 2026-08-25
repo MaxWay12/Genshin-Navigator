@@ -125,6 +125,8 @@ def record_scenario(
     expected_start_layer: str | None = None,
     expected_end_layer: str | None = None,
     stationary_last_seconds: float = 0.0,
+    genshin_ui_scale: str = "unknown",
+    graphics_preset: str = "unknown",
     capture_screen: Callable[[], np.ndarray] = grab_screen,
     clock: Callable[[], float] = time.perf_counter,
     sleeper: Callable[[float], None] = time.sleep,
@@ -181,6 +183,10 @@ def record_scenario(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "privacy": "Only the configured minimap crop is stored; full game frames are never written.",
         "interval_seconds": config.interval_seconds,
+        "compatibility": {
+            "genshin_ui_scale": genshin_ui_scale or "unknown",
+            "graphics_preset": graphics_preset or "unknown",
+        },
         "roi": {
             "left": config.roi.left,
             "top": config.roi.top,
