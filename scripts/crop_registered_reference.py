@@ -52,6 +52,10 @@ def main() -> int:
     metadata = {
         "source": str(args.source),
         "registration": str(args.registration),
+        "inliers": int(registration.get("inliers", 0)),
+        "median_error_px": float(
+            registration.get("median_error_px", float("inf"))
+        ),
         "crop": {
             "x": args.x,
             "y": args.y,
