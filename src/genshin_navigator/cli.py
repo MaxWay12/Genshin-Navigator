@@ -14,6 +14,7 @@ import numpy as np
 from .calibration import CalibrationSession
 from .application import LiveApplication, build_locator, load_runtime_data
 from .benchmark_suite import run_benchmark_suite, write_report_atomic
+from .benchmark_compare import compare_benchmark_suites
 from .capture import crop_roi, grab_screen, load_image, save_screen
 from .config import AppConfig, load_config
 from .data_store import (
@@ -41,6 +42,7 @@ from .progress_sync import (
 )
 from .progress_backup import ProgressTransferService
 from .scenario import evaluate_scenario, record_scenario
+from .scenario_annotation import annotate_scenario
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -101,6 +103,27 @@ def _parser() -> argparse.ArgumentParser:
     suite.add_argument("--report", required=True)
     suite.add_argument("--ui-scale", default="unknown")
     suite.add_argument("--graphics-preset", default="unknown")
+
+    compare = subparsers.add_parser(
+        "benchmark-compare", help="Compare baseline and candidate localization configurations"
+    )
+    compare.add_argument("manifest")
+    compare.add_argument("--baseline-config", required=True)
+    compare.add_argument("--candidate-config", required=True)
+    compare.add_argument("--report", required=True)
+    compare.add_argument("--regression-manifest")
+    compare.add_argument("--regression-config")
+    compare.add_argument("--ui-scale", default="unknown")
+    compare.add_argument("--graphics-preset", default="unknown")
+
+    annotate = subparsers.add_parser(
+        "annotate-scenario", help="Add canonical position checkpoints by clicking the atlas"
+    )
+    annotate.add_argument("scenario")
+    annotate.add_argument("--config", default="config.json")
+    annotate.add_argument("--region", default=None)
+    annotate.add_argument("--layer", default="surface")
+    annotate.add_argument("--tolerance-px", type=float, default=35.0)
 
     calibrate = subparsers.add_parser(
         "calibrate-distance",
@@ -478,7 +501,51 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(evaluate_dataset(args.dataset), ensure_ascii=False, indent=2))
             return 0
 
+        if args.command == "benchmark-compare":
+            baseline_config = load_config(args.baseline_config)
+            candidate_config = load_config(args.candidate_config)
+            baseline_matcher = _build_matcher(baseline_config)
+            candidate_matcher = _build_matcher(candidate_config)
+            regression = None
+            if bool(args.regression_manifest) != bool(args.regression_config):
+                raise ValueError(
+                    "--regression-manifest and --regression-config must be provided together"
+                )
+            if args.regression_manifest:
+                regression_config = load_config(args.regression_config)
+                regression = (
+                    args.regression_manifest,
+                    regression_config,
+                    _build_matcher(regression_config),
+                )
+            report = compare_benchmark_suites(
+                args.manifest,
+                baseline_config,
+                baseline_matcher,
+                candidate_config,
+                candidate_matcher,
+                regression=regression,
+                ui_scale=args.ui_scale,
+                graphics_preset=args.graphics_preset,
+            )
+            write_report_atomic(report, args.report)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["accepted"] else 2
+
         config = load_config(args.config)
+        if args.command == "annotate-scenario":
+            atlas_path = config.debug_map_path or config.map_path
+            if atlas_path is None:
+                raise ValueError("annotate-scenario requires debug_map_path or map_path")
+            saved = annotate_scenario(
+                args.scenario,
+                atlas_path,
+                region_id=args.region or config.data.region_id,
+                layer_id=args.layer,
+                tolerance_px=args.tolerance_px,
+            )
+            print("Scenario checkpoints saved." if saved else "Annotation cancelled; no changes were made.")
+            return 0 if saved else 2
         if args.command == "hoyolab-login":
             if not config.progress_sync.enabled:
                 raise ValueError("Progress sync is disabled in config")
