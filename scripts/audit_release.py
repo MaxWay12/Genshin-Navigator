@@ -37,6 +37,8 @@ def inspect_file(path: Path, *, artifact: bool) -> list[str]:
     relative_parts = {part.lower() for part in path.parts}
     if artifact and relative_parts & FORBIDDEN_ARTIFACT_PARTS:
         issues.append("forbidden personal-state path")
+    if artifact and "datasets" in relative_parts and "local" in relative_parts:
+        issues.append("release must not bundle downloaded content or user state")
     try:
         data = path.read_bytes()
     except OSError as error:

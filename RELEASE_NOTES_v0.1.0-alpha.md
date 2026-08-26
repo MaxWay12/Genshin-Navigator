@@ -1,5 +1,10 @@
 # Genshin Navigator v0.1.0-alpha
 
+The portable package contains only Navigator code, configuration, documentation
+and third-party license texts. It does not redistribute HoYoLAB maps, POI data or
+point images. Region data is downloaded by the user into a local cache on first
+launch after explicit confirmation.
+
 Первая публичная alpha пассивного GPS-помощника для Genshin Impact. Navigator
 анализирует только изображение миникарты: он не читает память игры, не внедряется
 в процесс и не эмулирует клавиатуру или мышь.

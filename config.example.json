@@ -45,8 +45,8 @@
     "acquisition_timeout_seconds": 2.0
   },
   "screen_gate": {
-    "enabled": true,
-    "template_path": "assets/minimap_compass_n.png",
+    "enabled": false,
+    "template_path": null,
     "match_threshold": 0.4,
     "blank_std_threshold": 12.0
   },

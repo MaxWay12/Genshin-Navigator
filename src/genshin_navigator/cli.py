@@ -45,6 +45,7 @@ from .progress_backup import ProgressTransferService
 from .scenario import evaluate_scenario, record_scenario
 from .scenario_annotation import annotate_scenario
 from .region_manifest import load_region_manifest
+from .asset_setup import setup_region
 from . import __version__
 
 
@@ -171,6 +172,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     data_status.add_argument("--config", default="config.json")
     data_status.add_argument("--region", default=None)
+
+    setup = subparsers.add_parser(
+        "setup-region",
+        help="Download regional map data into the user's local cache",
+    )
+    setup.add_argument("--config", default="config.json")
+    setup.add_argument("--region", default=None)
+    setup.add_argument("--yes", action="store_true")
+    setup.add_argument("--force", action="store_true")
 
     hoyolab_login = subparsers.add_parser(
         "hoyolab-login", help="Sign in to HoYoLAB in an isolated WebView2 window"
@@ -568,6 +578,27 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("track --region requires --regions")
             config_path = load_region_manifest(args.regions).get(args.region).config_path
         config = load_config(config_path)
+        if args.command == "setup-region":
+            region_id = args.region or config.data.region_id
+            if not args.yes:
+                print(
+                    "This downloads map and POI content from endpoints used by the "
+                    "HoYoLAB Interactive Map into datasets/local. The content is not "
+                    "part of Genshin Navigator and remains subject to HoYoLAB terms."
+                )
+                try:
+                    answer = input("Continue? [y/N] ").strip().lower()
+                except EOFError:
+                    answer = ""
+                if answer not in {"y", "yes", "д", "да"}:
+                    print("Regional data setup cancelled; no changes were made.")
+                    return 0
+            print(json.dumps(
+                setup_region(config, region_id, force=args.force),
+                ensure_ascii=False,
+                indent=2,
+            ))
+            return 0
         if args.command == "annotate-scenario":
             atlas_path = config.debug_map_path or config.map_path
             if atlas_path is None:

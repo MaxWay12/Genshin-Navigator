@@ -19,22 +19,6 @@ if (-not (Test-Path -LiteralPath $PyInstaller)) {
     throw "PyInstaller is missing. Install requirements-build.txt in .venv."
 }
 
-$Required = @(
-    "datasets/local/references/hoyolab_fontaine_full_n1/atlas.png",
-    "datasets/local/references/hoyolab_fontaine_full_n1/pyramid.json",
-    "datasets/local/references/hoyolab_fontaine_underground/metadata.json",
-    "datasets/local/references/hoyolab_sumeru_desert_n1/atlas.png",
-    "datasets/local/references/hoyolab_sumeru_desert_n1/surface_pyramid.json",
-    "datasets/local/references/sumeru_semantic_anchors/anchors.json",
-    "datasets/local/poi/fontaine.json",
-    "datasets/local/poi/sumeru-desert.json"
-)
-foreach ($Relative in $Required) {
-    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $Relative))) {
-        throw "Missing release asset: $Relative"
-    }
-}
-
 & $PyInstaller `
     --noconfirm `
     --clean `
@@ -67,7 +51,6 @@ function Copy-ReleaseDirectory([string]$Relative) {
     Copy-Item -LiteralPath $Source -Destination $Target -Recurse -Force
 }
 
-Copy-ReleaseFile "assets/minimap_compass_n.png"
 Copy-ReleaseFile "config.example.json"
 Copy-ReleaseFile "config.sumeru.example.json"
 Copy-ReleaseFile "release/regions.portable.json" "regions.json"
@@ -75,17 +58,15 @@ Copy-ReleaseFile "README.md"
 Copy-ReleaseFile "CHANGELOG.md"
 Copy-ReleaseFile "RELEASE_NOTES_v0.1.0-alpha.md"
 Copy-ReleaseFile "LICENSE"
+Copy-ReleaseFile "THIRD_PARTY_NOTICES.md"
 Copy-ReleaseFile "release/Start-Fontaine.cmd" "Start-Fontaine.cmd"
 Copy-ReleaseFile "release/Start-Sumeru-Experimental.cmd" "Start-Sumeru-Experimental.cmd"
-Copy-ReleaseFile "datasets/local/poi/fontaine.json"
-Copy-ReleaseFile "datasets/local/poi/sumeru-desert.json"
-Copy-ReleaseDirectory "datasets/local/references/hoyolab_fontaine_full_n1"
-Copy-ReleaseDirectory "datasets/local/references/hoyolab_fontaine_underground"
-Copy-ReleaseDirectory "datasets/local/references/hoyolab_sumeru_desert_n1"
-Copy-ReleaseDirectory "datasets/local/references/sumeru_semantic_anchors"
 
-# Never ship developer-only tile caches or rejected experimental references.
-Get-ChildItem -LiteralPath $Stage -Directory -Recurse -Filter tiles | Remove-Item -Recurse -Force
+& $Python (Join-Path $ProjectRoot "scripts/collect_licenses.py") --output (Join-Path $Stage "licenses")
+if ($LASTEXITCODE -ne 0) { throw "Third-party license collection failed" }
+
+# Official map tiles, POI data, point images and user state are intentionally
+# absent. The user downloads regional content into datasets/local on first run.
 # Editable-install provenance contains the developer checkout path and is not
 # required at runtime. Package metadata itself remains available for versioning.
 Get-ChildItem -LiteralPath $Stage -File -Recurse -Filter direct_url.json | Remove-Item -Force
