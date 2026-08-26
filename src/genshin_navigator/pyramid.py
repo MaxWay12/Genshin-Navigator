@@ -225,6 +225,10 @@ class PyramidMatcher:
                     inliers=item.inliers,
                     reason=item.reason,
                     found=item.found,
+                    ambiguity_best_score=item.ambiguity_best_score,
+                    ambiguity_second_score=item.ambiguity_second_score,
+                    ambiguity_margin=item.ambiguity_margin,
+                    search_area=item.search_area,
                 )
                 for item in ranked
             ),

@@ -65,6 +65,28 @@ class FakeLocator:
         )
 
 
+class InstrumentedEdgeLocator:
+    def locate(self, minimap: np.ndarray) -> LocateResult:
+        index = int(round(float(minimap.mean())))
+        return LocateResult(
+            found=True,
+            x_px=100.0 + index,
+            y_px=100.0,
+            confidence=0.6,
+            matches=12,
+            inliers=12,
+            reference_id="edge_correlation",
+            map_layer_id="surface",
+            match_method="edge_correlation",
+            region_id="fontaine",
+            coordinate_space=CoordinateSpace.SURFACE_ATLAS,
+            ambiguity_best_score=0.8,
+            ambiguity_second_score=0.6,
+            ambiguity_margin=0.2,
+            search_area=(0.0, 0.0, 500.0, 500.0),
+        )
+
+
 def app_config() -> AppConfig:
     return AppConfig(
         map_path=Path("unused.png"),
@@ -85,6 +107,60 @@ def app_config() -> AppConfig:
 
 
 class ScenarioTests(unittest.TestCase):
+    def test_reports_edge_margin_absolute_fix_age_and_checkpoint_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            frames_dir = root / "frames"
+            frames_dir.mkdir()
+            frames = []
+            for index in range(3):
+                name = f"frame_{index}.png"
+                cv2.imwrite(
+                    str(frames_dir / name),
+                    np.full((4, 4, 3), index, dtype=np.uint8),
+                )
+                frames.append(
+                    {"image": f"frames/{name}", "timestamp_seconds": index * 0.1}
+                )
+            (root / "scenario.json").write_text(
+                json.dumps(
+                    {
+                        "format_version": 1,
+                        "expectations": [
+                            {
+                                "name": "surface",
+                                "start_seconds": 0.0,
+                                "end_seconds": 0.2,
+                                "tracking": "required",
+                                "region_id": "fontaine",
+                                "layer_id": "surface",
+                            }
+                        ],
+                        "checkpoints": [
+                            {
+                                "timestamp_seconds": 0.2,
+                                "region_id": "fontaine",
+                                "layer_id": "surface",
+                                "position": {"x": 102.0, "y": 100.0, "tolerance_px": 5.0},
+                            }
+                        ],
+                        "frames": frames,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = evaluate_scenario(root, app_config(), InstrumentedEdgeLocator())
+
+            metrics = report["metrics"]
+            self.assertEqual(metrics["edge_absolute_fix_count"], 2)
+            self.assertEqual(metrics["edge_ambiguity_margin_min"], 0.2)
+            self.assertEqual(metrics["absolute_fix_age_max_seconds"], 0.0)
+            checkpoint = report["checkpoint_results"][0]
+            self.assertEqual(checkpoint["match_method"], "edge_correlation")
+            self.assertEqual(checkpoint["edge_ambiguity_margin"], 0.2)
+            self.assertEqual(checkpoint["position_error_px"], 0.75)
+
     def test_recorder_stores_only_the_minimap_crop_and_monotonic_time(self) -> None:
         clock = FakeClock()
         desktop = np.zeros((12, 12, 3), dtype=np.uint8)

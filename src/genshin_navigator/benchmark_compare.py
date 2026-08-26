@@ -10,6 +10,8 @@ DELTA_METRICS = (
     "reacquisition_p95_seconds",
     "longest_untracked_streak_seconds",
     "stationary_jitter_p95_px",
+    "edge_ambiguity_margin_p05",
+    "absolute_fix_age_p95_seconds",
     "mean_processing_ms",
     "p95_processing_ms",
 )

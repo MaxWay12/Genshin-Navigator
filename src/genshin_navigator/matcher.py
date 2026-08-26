@@ -20,6 +20,10 @@ class CandidateMatch:
     inliers: int
     reason: str | None
     found: bool
+    ambiguity_best_score: float | None = None
+    ambiguity_second_score: float | None = None
+    ambiguity_margin: float | None = None
+    search_area: tuple[float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,10 @@ class LocateResult:
     region_id: str | None = None
     coordinate_space: CoordinateSpace | None = None
     candidates: tuple[CandidateMatch, ...] = ()
+    ambiguity_best_score: float | None = None
+    ambiguity_second_score: float | None = None
+    ambiguity_margin: float | None = None
+    search_area: tuple[float, float, float, float] | None = None
 
     def to_dict(self) -> dict[str, object]:
         result = asdict(self)

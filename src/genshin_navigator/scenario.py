@@ -435,12 +435,20 @@ def evaluate_scenario(
 
     checkpoint_errors: list[float] = []
     checkpoint_tracking_samples = 0
+    checkpoint_results: list[dict[str, object]] = []
     for checkpoint in checkpoints:
         row_index = _nearest_row_index(rows, float(checkpoint["timestamp_seconds"]))
         row = rows[row_index]
         tracker_raw = row["tracker"]
         assert isinstance(tracker_raw, dict)
         if not _is_confirmed(tracker_raw):
+            checkpoint_results.append(
+                {
+                    "timestamp_seconds": checkpoint["timestamp_seconds"],
+                    "tracked": False,
+                    "ground_truth_position": checkpoint.get("position"),
+                }
+            )
             continue
         checkpoint_tracking_samples += 1
         if not _position_matches_dict(tracker_raw, checkpoint):
@@ -448,11 +456,35 @@ def evaluate_scenario(
         position = tracker_raw["position"]
         expected = checkpoint["position"]
         assert isinstance(position, dict) and isinstance(expected, dict)
-        checkpoint_errors.append(
-            math.hypot(
-                float(position["x"]) - float(expected["x"]),
-                float(position["y"]) - float(expected["y"]),
-            )
+        error = math.hypot(
+            float(position["x"]) - float(expected["x"]),
+            float(position["y"]) - float(expected["y"]),
+        )
+        checkpoint_errors.append(error)
+        localization_raw = row.get("localization")
+        checkpoint_results.append(
+            {
+                "timestamp_seconds": checkpoint["timestamp_seconds"],
+                "tracked": True,
+                "predicted_position": {
+                    "x": position["x"],
+                    "y": position["y"],
+                    "region_id": position.get("region_id"),
+                    "layer_id": position.get("layer_id"),
+                },
+                "ground_truth_position": checkpoint.get("position"),
+                "position_error_px": round(error, 3),
+                "match_method": (
+                    localization_raw.get("match_method")
+                    if isinstance(localization_raw, dict)
+                    else None
+                ),
+                "edge_ambiguity_margin": (
+                    localization_raw.get("ambiguity_margin")
+                    if isinstance(localization_raw, dict)
+                    else None
+                ),
+            }
         )
 
     acquisition_delays: list[float | None] = []
@@ -566,6 +598,28 @@ def evaluate_scenario(
     longest_untracked = _longest_streak(rows, untracked_required)
     longest_lost = _longest_streak(rows, lost_required)
     all_position_errors = position_errors + checkpoint_errors
+    edge_fixes = [
+        row["localization"]
+        for row in rows
+        if isinstance(row.get("localization"), dict)
+        and row["localization"].get("found") is True
+        and row["localization"].get("match_method") == "edge_correlation"
+        and isinstance(row.get("tracker"), dict)
+        and row["tracker"].get("accepted") is True
+    ]
+    edge_margins = [
+        float(item["ambiguity_margin"])
+        for item in edge_fixes
+        if item.get("ambiguity_margin") is not None
+    ]
+    absolute_fix_ages = [
+        float(row["tracker"]["absolute_fix_age_seconds"])
+        for row in rows
+        if isinstance(row.get("tracker"), dict)
+        and row["tracker"].get("absolute_fix_age_seconds") is not None
+        and isinstance(row.get("gate"), dict)
+        and row["gate"].get("minimap_present")
+    ]
     metrics: dict[str, object] = {
         "total_frames": len(rows),
         "visible_frames": sum(bool(row["gate"]["minimap_present"]) for row in rows),
@@ -596,6 +650,12 @@ def evaluate_scenario(
         "stationary_jitter_p95_px": round(jitter_p95, 3) if jitter_p95 is not None else None,
         "median_position_error_px": round(statistics.median(all_position_errors), 3) if all_position_errors else None,
         "p95_position_error_px": round(_percentile(all_position_errors, 0.95), 3) if all_position_errors else None,
+        "edge_absolute_fix_count": len(edge_fixes),
+        "edge_ambiguity_margin_min": round(min(edge_margins), 4) if edge_margins else None,
+        "edge_ambiguity_margin_median": round(statistics.median(edge_margins), 4) if edge_margins else None,
+        "edge_ambiguity_margin_p05": round(_percentile(edge_margins, 0.05), 4) if edge_margins else None,
+        "absolute_fix_age_max_seconds": round(max(absolute_fix_ages), 4) if absolute_fix_ages else None,
+        "absolute_fix_age_p95_seconds": round(_percentile(absolute_fix_ages, 0.95), 4) if absolute_fix_ages else None,
         "mean_processing_ms": round(statistics.mean(processing_ms), 2),
         "p95_processing_ms": round(_percentile(processing_ms, 0.95), 2),
     }
@@ -607,6 +667,7 @@ def evaluate_scenario(
         "annotated": annotated,
         "passed": passed,
         "metrics": metrics,
+        "checkpoint_results": checkpoint_results,
         "frames": rows,
     }
 

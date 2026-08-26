@@ -43,6 +43,11 @@ class EdgeCorrelationLocalizerTests(unittest.TestCase):
         self.assertAlmostEqual(result.x_px or 0, 210, delta=2)
         self.assertAlmostEqual(result.y_px or 0, 150, delta=2)
         self.assertEqual(result.match_method, "edge_correlation")
+        self.assertIsNotNone(result.ambiguity_best_score)
+        self.assertIsNotNone(result.ambiguity_second_score)
+        self.assertIsNotNone(result.ambiguity_margin)
+        self.assertGreater(result.ambiguity_margin or 0, 0.05)
+        self.assertEqual(result.search_area, (0.0, 0.0, 420.0, 320.0))
 
     def test_rejects_two_equally_plausible_locations(self) -> None:
         reference = self._reference()
@@ -56,6 +61,8 @@ class EdgeCorrelationLocalizerTests(unittest.TestCase):
         result = localizer.locate(minimap)
         self.assertFalse(result.found)
         self.assertEqual(result.reason, "edge_correlation_ambiguous")
+        self.assertIsNotNone(result.ambiguity_margin)
+        self.assertLess(result.ambiguity_margin or 1, 0.10)
 
     def test_rejects_blank_minimap(self) -> None:
         localizer = EdgeCorrelationLocalizer(

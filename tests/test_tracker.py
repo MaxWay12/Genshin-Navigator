@@ -14,6 +14,7 @@ def located(
     confidence: float = 0.9,
     inliers: int = 20,
     layer: str = "surface",
+    method: str | None = None,
 ) -> LocateResult:
     return LocateResult(
         found=True,
@@ -29,6 +30,7 @@ def located(
             if layer == "surface"
             else CoordinateSpace.LAYER_LOCAL
         ),
+        match_method=method,
     )
 
 
@@ -76,6 +78,18 @@ class LiveTrackerTests(unittest.TestCase):
 
         self.assertEqual(moved.state, TrackerState.TRACKING)
         self.assertEqual(moved.x_px, 103.0)
+
+    def test_absolute_fix_age_advances_only_during_relative_motion(self) -> None:
+        self.tracker.update(located(100, 100), 0.0)
+        acquired = self.tracker.update(located(100, 100), 0.1)
+        relative = self.tracker.update(located(101, 100, method="motion"), 0.5)
+        refreshed = self.tracker.update(
+            located(102, 100, method="edge_correlation"), 0.7
+        )
+
+        self.assertEqual(acquired.absolute_fix_age_seconds, 0.0)
+        self.assertEqual(relative.absolute_fix_age_seconds, 0.4)
+        self.assertEqual(refreshed.absolute_fix_age_seconds, 0.0)
 
     def test_exposes_hint_only_after_position_is_confirmed(self) -> None:
         self.assertIsNone(self.tracker.position_hint)

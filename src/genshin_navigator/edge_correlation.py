@@ -203,17 +203,31 @@ class EdgeCorrelationLocalizer:
         )
         second_score = distinct.score if distinct is not None else 0.0
         margin = best.score - second_score
+        evidence = {
+            "ambiguity_best_score": round(max(0.0, best.score), 4),
+            "ambiguity_second_score": round(max(0.0, second_score), 4),
+            "ambiguity_margin": round(margin, 4),
+            "search_area": (0.0, 0.0, float(reference_width), float(reference_height)),
+        }
         if best.score < self.config.min_score:
             return LocateResult(
                 found=False,
                 confidence=round(max(0.0, best.score), 4),
                 reason="edge_correlation_score_too_low",
+                match_method="edge_correlation",
+                region_id=self.region_id,
+                coordinate_space=CoordinateSpace.SURFACE_ATLAS,
+                **evidence,
             )
         if margin < self.config.min_peak_margin:
             return LocateResult(
                 found=False,
                 confidence=round(max(0.0, best.score), 4),
                 reason="edge_correlation_ambiguous",
+                match_method="edge_correlation",
+                region_id=self.region_id,
+                coordinate_space=CoordinateSpace.SURFACE_ATLAS,
+                **evidence,
             )
 
         support = max(8, round(best.score * 30))
@@ -241,4 +255,5 @@ class EdgeCorrelationLocalizer:
             match_method="edge_correlation",
             region_id=self.region_id,
             coordinate_space=CoordinateSpace.SURFACE_ATLAS,
+            **evidence,
         )

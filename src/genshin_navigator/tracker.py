@@ -25,6 +25,7 @@ class TrackerSnapshot:
     stale: bool
     reason: str | None
     position: MapPosition | None = None
+    absolute_fix_age_seconds: float | None = None
 
     def to_dict(self) -> dict[str, object]:
         result = asdict(self)
@@ -56,6 +57,8 @@ class LiveTracker:
         self._region_id: str | None = None
         self._coordinate_space: CoordinateSpace | None = None
         self._confidence = 0.0
+        self._last_absolute_fix_timestamp: float | None = None
+        self._candidate_match_method: str | None = None
 
     @staticmethod
     def _distance(a_x: float, a_y: float, b_x: float, b_y: float) -> float:
@@ -99,6 +102,7 @@ class LiveTracker:
         self._candidate_region_id = region_id
         self._candidate_coordinate_space = coordinate_space
         self._candidate_confidence = result.confidence
+        self._candidate_match_method = result.match_method
         self._candidate_hits = 1
 
     def _update_candidate(self, x: float, y: float, result: LocateResult) -> bool:
@@ -119,6 +123,7 @@ class LiveTracker:
         self._candidate_x += (x - self._candidate_x) / count
         self._candidate_y += (y - self._candidate_y) / count
         self._candidate_confidence = result.confidence
+        self._candidate_match_method = result.match_method
         self._candidate_hits = count
         return True
 
@@ -133,12 +138,15 @@ class LiveTracker:
             self._candidate_coordinate_space or self._coordinate_space
         )
         self._confidence = self._candidate_confidence
+        if self._candidate_match_method != "motion":
+            self._last_absolute_fix_timestamp = timestamp
         self._candidate_x = self._candidate_y = None
         self._candidate_map_layer_id = None
         self._candidate_reference_id = None
         self._candidate_region_id = None
         self._candidate_coordinate_space = None
         self._candidate_confidence = 0.0
+        self._candidate_match_method = None
         self._candidate_hits = 0
         self.state = TrackerState.TRACKING
 
@@ -206,6 +214,11 @@ class LiveTracker:
             stale=stale,
             reason=reason,
             position=position,
+            absolute_fix_age_seconds=(
+                round(max(0.0, (self._last_timestamp or 0.0) - self._last_absolute_fix_timestamp), 4)
+                if self._last_absolute_fix_timestamp is not None
+                else None
+            ),
         )
 
     def update(self, result: LocateResult, timestamp: float) -> TrackerSnapshot:
@@ -228,6 +241,7 @@ class LiveTracker:
                 self._candidate_region_id = None
                 self._candidate_coordinate_space = None
                 self._candidate_confidence = 0.0
+                self._candidate_match_method = None
                 self._candidate_hits = 0
             elif self.state in (TrackerState.ACQUIRING, TrackerState.RELOCATING):
                 self.state = TrackerState.TRACKING
@@ -276,6 +290,7 @@ class LiveTracker:
             self._candidate_region_id = None
             self._candidate_coordinate_space = None
             self._candidate_confidence = 0.0
+            self._candidate_match_method = None
             self._candidate_hits = 0
             self.state = TrackerState.TRACKING
             self._map_layer_id = result_layer_id
@@ -283,6 +298,8 @@ class LiveTracker:
             self._region_id = result_region_id
             self._coordinate_space = result_coordinate_space
             self._confidence = result.confidence
+            if result.match_method != "motion":
+                self._last_absolute_fix_timestamp = timestamp
             return self._snapshot(result, accepted=True, stale=False, reason=None)
 
         if self.state is not TrackerState.RELOCATING:
