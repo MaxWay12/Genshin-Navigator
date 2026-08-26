@@ -13,6 +13,7 @@ from .anchor_localization import AnchorLocalizer
 from .capture import load_image
 from .config import LocalSearchConfig, MatcherConfig
 from .matcher import CandidateMatch, LocateResult, MinimapMatcher, UndergroundMinimapMatcher
+from .motion_localization import RelativeMotionLocalizer
 from .position import CoordinateSpace, MapPosition
 
 
@@ -68,6 +69,7 @@ class PyramidMatcher:
         early_accept_confidence: float = 0.98,
         region_id: str = "unknown",
         anchor_localizer: AnchorLocalizer | None = None,
+        motion_localizer: RelativeMotionLocalizer | None = None,
     ):
         width, height = canonical_size
         if width <= 0 or height <= 0:
@@ -81,6 +83,24 @@ class PyramidMatcher:
         self.early_accept_confidence = early_accept_confidence
         self.region_id = region_id
         self.anchor_localizer = anchor_localizer
+        self.motion_localizer = motion_localizer
+        self._last_canonical_scale = 1.0
+
+    def _observe_primary(self, minimap: np.ndarray, result: LocateResult) -> None:
+        scale = result.canonical_scale or result.scale
+        if scale is not None and 0.2 <= scale <= 5.0:
+            self._last_canonical_scale = float(scale)
+        if self.anchor_localizer is not None:
+            self.anchor_localizer.observe_primary(result)
+        if self.motion_localizer is not None:
+            self.motion_localizer.observe(minimap)
+
+    def reset_continuity(self) -> None:
+        """Discard relative-only evidence after the minimap disappears."""
+        if self.anchor_localizer is not None:
+            self.anchor_localizer.reset_continuity()
+        if self.motion_localizer is not None:
+            self.motion_localizer.reset()
 
     @property
     def layer_labels(self) -> dict[str, str]:
@@ -213,13 +233,12 @@ class PyramidMatcher:
             if local_result.found:
                 canonical_result = self._to_position(local_result, level)
                 if canonical_result.found:
-                    if self.anchor_localizer is not None:
-                        self.anchor_localizer.observe_primary(canonical_result)
                     candidates.append(canonical_result)
                     if (
                         canonical_result.confidence >= self.early_accept_confidence
                         and canonical_result.inliers >= 20
                     ):
+                        self._observe_primary(minimap, canonical_result)
                         return self._with_candidates(
                             canonical_result, candidates + failures
                         )
@@ -250,12 +269,12 @@ class PyramidMatcher:
 
         if candidates:
             best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
-            if self.anchor_localizer is not None:
-                self.anchor_localizer.observe_primary(best)
+            self._observe_primary(minimap, best)
             return self._with_candidates(best, candidates + failures)
         if self.anchor_localizer is not None:
             anchored = self.anchor_localizer.locate(minimap)
             if anchored.found:
+                self._observe_primary(minimap, anchored)
                 return self._with_candidates(anchored, failures + [anchored])
         best = max(failures, key=lambda item: (item.inliers, item.matches, item.confidence))
         best = replace(best, reason="no_pyramid_level_matched")
@@ -329,8 +348,7 @@ class PyramidMatcher:
                 failures.append(self._tag_failure(local_result, level))
         if candidates:
             best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
-            if self.anchor_localizer is not None:
-                self.anchor_localizer.observe_primary(best)
+            self._observe_primary(minimap, best)
             return self._with_candidates(best, candidates + failures)
         for level in fallback_levels:
             fallback = level.matcher.locate_fallback(minimap)  # type: ignore[attr-defined]
@@ -344,12 +362,18 @@ class PyramidMatcher:
                 candidates.append(canonical)
         if candidates:
             best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
-            if self.anchor_localizer is not None:
-                self.anchor_localizer.observe_primary(best)
+            self._observe_primary(minimap, best)
             return self._with_candidates(best, candidates + failures)
+        if self.motion_localizer is not None:
+            motion = self.motion_localizer.locate_near(
+                minimap, position, self._last_canonical_scale
+            )
+            if motion.found:
+                return self._with_candidates(motion, failures + [motion])
         if self.anchor_localizer is not None:
             anchored = self.anchor_localizer.locate_near(minimap, position)
             if anchored.found:
+                self._observe_primary(minimap, anchored)
                 return self._with_candidates(anchored, failures + [anchored])
         if failures:
             best = max(failures, key=lambda item: (item.inliers, item.matches, item.confidence))
@@ -368,6 +392,7 @@ def load_pyramid(
     path: str | Path,
     config: MatcherConfig | None = None,
     anchor_localizer: AnchorLocalizer | None = None,
+    motion_localizer: RelativeMotionLocalizer | None = None,
 ) -> PyramidMatcher:
     manifest_path = Path(path).resolve()
     with manifest_path.open("r", encoding="utf-8") as stream:
@@ -421,4 +446,5 @@ def load_pyramid(
         levels,
         region_id=region_id,
         anchor_localizer=anchor_localizer,
+        motion_localizer=motion_localizer,
     )

@@ -32,11 +32,30 @@ The candidate reached 40.79% ruins coverage versus 39.86% for base-only and did
 not regress the other three scenarios. This is not a meaningful improvement,
 so the detail level is rejected and is not part of the default configuration.
 
+## Bounded relative motion
+
+A conservative optical-flow fallback was tested after an absolute SIFT or
+semantic-anchor fix. Lucas-Kanade tracks must agree with phase correlation,
+large steps are rejected, and relative motion is limited to five consecutive
+frames. Any hidden-minimap/loading interval discards continuity, so the
+fallback cannot carry an old position through a teleport.
+
+Combined with semantic anchors, sparse-ruins coverage reached 91.38%, up from
+39.86% for base-only. The longest unavailable interval fell to 0.30 seconds,
+stationary jitter was 4.88 canonical pixels, and false locks and wrong layers
+remained zero. The teleport scenario also retained zero false locks, with a
+1.70-second reacquisition and 4.62-pixel P95 checkpoint error.
+
+The variant caused no previously passing scenario to fail, but neither the
+ruins scenario (91.38%) nor the recorded teleport scenario (92.47%) reached the
+95% coverage gate. It therefore remains disabled by default.
+
 ## Verdict
 
 Sumeru portability is still incomplete. A higher-resolution cartographic image
-alone does not solve the sparse visual domain. Semantic anchors are useful
-corroborating evidence and substantially shorten losses, but are not sufficient
-on their own. The next controlled experiment should bridge established tracks
-with a conservative frame-to-frame motion fallback, while retaining SIFT for
-absolute acquisition and keeping false locks at zero.
+alone does not solve the sparse visual domain. Semantic anchors and bounded
+relative motion substantially shorten losses, but the combined candidate still
+misses the coverage gate. It is a safe experimental profile, not yet the
+default Sumeru localizer. The next experiment should improve absolute evidence
+in sparse areas instead of relaxing global thresholds or extending dead
+reckoning.

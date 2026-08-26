@@ -44,6 +44,18 @@
     "max_residual_px": 12.0,
     "default_canonical_scale": 0.83
   },
+  "motion_fallback": {
+    "enabled": true,
+    "max_features": 160,
+    "min_inliers": 12,
+    "forward_backward_error_px": 1.5,
+    "max_residual_px": 3.0,
+    "max_screen_step_px": 12.0,
+    "min_phase_response": 0.22,
+    "max_phase_disagreement_px": 2.0,
+    "max_consecutive_frames": 5,
+    "confidence": 0.58
+  },
   "failure_recorder": {
     "enabled": true,
     "output_dir": "datasets/local/portability/failures",

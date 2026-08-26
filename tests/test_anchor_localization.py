@@ -14,6 +14,7 @@ from genshin_navigator.anchor_localization import (
     TemplateAnchorDetector,
 )
 from genshin_navigator.config import AnchorLocalizationConfig
+from genshin_navigator.matcher import LocateResult
 from genshin_navigator.position import CoordinateSpace, MapPosition, PositionState
 
 
@@ -57,6 +58,7 @@ class AnchorLocalizationTests(unittest.TestCase):
             "sumeru_desert", (500, 500),
             [MapAnchor("a", "waypoint", 120, 100)], detector, self._config(),
         )
+        localizer.observe_primary(LocateResult(found=True, scale=0.8))
         result = localizer.locate_near(np.zeros((100, 100, 3), np.uint8), _position(101, 100))
         self.assertTrue(result.found)
         self.assertEqual((result.x_px, result.y_px), (100.0, 100.0))
@@ -71,9 +73,24 @@ class AnchorLocalizationTests(unittest.TestCase):
                 MapAnchor("b", "waypoint", 122, 100),
             ], detector, self._config(),
         )
+        localizer.observe_primary(LocateResult(found=True, scale=0.8))
         result = localizer.locate_near(np.zeros((100, 100, 3), np.uint8), _position(101, 100))
         self.assertFalse(result.found)
         self.assertEqual(result.reason, "no_local_anchor_assignment")
+
+    def test_local_anchor_is_disarmed_after_tracking_interruption(self) -> None:
+        detector = _Detector([ObservedAnchor("waypoint", 75, 50, 0.9)])
+        localizer = AnchorLocalizer(
+            "sumeru_desert", (500, 500),
+            [MapAnchor("a", "waypoint", 120, 100)], detector, self._config(),
+        )
+        localizer.observe_primary(LocateResult(found=True, scale=0.8))
+        localizer.reset_continuity()
+        result = localizer.locate_near(
+            np.zeros((100, 100, 3), np.uint8), _position(101, 100)
+        )
+        self.assertFalse(result.found)
+        self.assertEqual(result.reason, "anchor_requires_absolute_fix")
 
     def test_three_consistent_anchors_allow_global_acquisition(self) -> None:
         detector = _Detector(

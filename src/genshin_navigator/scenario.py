@@ -360,6 +360,8 @@ def evaluate_scenario(
         previous_visible = gate_result.minimap_present
         localization = None
         if not gate_result.minimap_present:
+            if isinstance(matcher, PyramidMatcher):
+                matcher.reset_continuity()
             snapshot = tracker.pause(timestamp, gate_result.reason or "minimap_not_visible")
         else:
             hint = tracker.position_hint

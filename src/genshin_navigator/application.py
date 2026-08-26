@@ -18,6 +18,7 @@ from .debug_view import DebugMapView
 from .failure_recorder import DiagnosticContext, FailureRecorder
 from .hotkeys import HotkeyAction
 from .matcher import LocateResult, MinimapMatcher
+from .motion_localization import RelativeMotionLocalizer
 from .storage_schema import SCHEMA_VERSION
 from .navigation import NavigationController
 from .poi_guidance import HoyoLabPoiHintProvider, PoiHintService, SqlitePoiHintRepository
@@ -32,10 +33,15 @@ def build_locator(config: AppConfig) -> Locator:
             AnchorLocalizer.from_config(config.anchor_localization)
             if config.anchor_localization.enabled else None
         )
+        motion_localizer = (
+            RelativeMotionLocalizer(config.motion_fallback, config.data.region_id)
+            if config.motion_fallback.enabled else None
+        )
         return load_pyramid(
             config.pyramid_path,
             config.matcher,
             anchor_localizer=anchor_localizer,
+            motion_localizer=motion_localizer,
         )
     if config.map_path is None:
         raise ValueError("A map_path or pyramid_path is required")
@@ -203,6 +209,8 @@ class LiveApplication:
                 minimap = crop_roi(grab_screen(), config.roi)
                 gate_result = gate.check(minimap) if gate else None
                 if gate_result is not None and not gate_result.minimap_present:
+                    if isinstance(locator, PyramidMatcher):
+                        locator.reset_continuity()
                     now = time.perf_counter()
                     reason = gate_result.reason or "minimap_not_visible"
                     snapshot = tracker.pause(now, reason)
@@ -271,6 +279,8 @@ class LiveApplication:
             gate_result = gate.check(minimap) if gate else None
             last_timestamp = time.perf_counter()
             if gate_result is not None and not gate_result.minimap_present:
+                if isinstance(locator, PyramidMatcher):
+                    locator.reset_continuity()
                 reason = gate_result.reason or "minimap_not_visible"
                 localization = LocateResult(found=False, reason=reason)
                 snapshot = tracker.pause(last_timestamp, reason)

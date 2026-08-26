@@ -102,6 +102,39 @@ class AnchorLocalizationConfig:
 
 
 @dataclass(frozen=True)
+class MotionFallbackConfig:
+    """Conservative relative motion used only while a track already exists."""
+
+    enabled: bool = False
+    max_features: int = 160
+    min_inliers: int = 20
+    forward_backward_error_px: float = 1.5
+    max_residual_px: float = 2.5
+    max_screen_step_px: float = 12.0
+    min_phase_response: float = 0.22
+    max_phase_disagreement_px: float = 2.0
+    max_consecutive_frames: int = 5
+    confidence: float = 0.58
+
+    def __post_init__(self) -> None:
+        if self.max_features < self.min_inliers or self.min_inliers < 8:
+            raise ValueError("motion fallback feature counts are invalid")
+        if (
+            self.forward_backward_error_px <= 0
+            or self.max_residual_px <= 0
+            or self.max_screen_step_px <= 0
+            or self.max_phase_disagreement_px <= 0
+        ):
+            raise ValueError("motion fallback geometry thresholds must be positive")
+        if not 0 < self.confidence <= 1:
+            raise ValueError("motion fallback confidence must be within (0, 1]")
+        if not 0 < self.min_phase_response <= 1:
+            raise ValueError("motion fallback phase response must be within (0, 1]")
+        if self.max_consecutive_frames < 1:
+            raise ValueError("motion fallback frame budget must be positive")
+
+
+@dataclass(frozen=True)
 class FailureRecorderConfig:
     enabled: bool = False
     output_dir: Path = Path("artifacts/failures")
@@ -277,6 +310,7 @@ class AppConfig:
     anchor_localization: AnchorLocalizationConfig = field(
         default_factory=AnchorLocalizationConfig
     )
+    motion_fallback: MotionFallbackConfig = field(default_factory=MotionFallbackConfig)
     failure_recorder: FailureRecorderConfig = field(default_factory=FailureRecorderConfig)
     screen_gate: ScreenGateConfig = field(default_factory=ScreenGateConfig)
     poi: PoiConfig = field(default_factory=PoiConfig)
@@ -418,6 +452,7 @@ def load_config(path: str | Path) -> AppConfig:
             template_paths={kind: path for kind, path in anchor_templates.items() if path is not None},
             **anchor_raw,
         ),
+        motion_fallback=MotionFallbackConfig(**raw.get("motion_fallback", {})),
         failure_recorder=FailureRecorderConfig(
             output_dir=recorder_output, **recorder_raw
         ),

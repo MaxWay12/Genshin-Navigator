@@ -11,6 +11,11 @@ confirmed position. Acquisition without a prior position requires at least
 three geometrically consistent symbols. The normal matcher thresholds are not
 weakened.
 
+Local single-anchor continuation is explicitly disarmed whenever the minimap
+disappears. After a loading screen or teleport it cannot reuse the previous
+position until SIFT or a three-anchor global acquisition establishes a new
+absolute fix.
+
 ## Build a local catalogue
 
 The catalogue and downloaded icon templates belong under `datasets/local` and
@@ -36,5 +41,5 @@ meet the gating targets of 95% coverage and 5 pixels jitter. It remains an
 optional portability experiment rather than the production default.
 
 The result supports using semantic map objects as corroborating evidence, but
-not replacing the visual map matcher. The next bounded experiment is a genuine
-detail reference for the ruins; global matcher thresholds must remain fixed.
+not replacing the visual map matcher. Detail-reference and bounded-motion
+experiments keep the global matcher thresholds fixed.

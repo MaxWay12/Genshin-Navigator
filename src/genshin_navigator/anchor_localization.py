@@ -154,6 +154,7 @@ class AnchorLocalizer:
         self.detector = detector
         self.config = config
         self._canonical_scale = config.default_canonical_scale
+        self._local_armed = False
 
     @classmethod
     def from_config(cls, config: AnchorLocalizationConfig) -> "AnchorLocalizer":
@@ -168,6 +169,10 @@ class AnchorLocalizer:
         scale = result.canonical_scale or result.scale
         if result.found and scale is not None and 0.2 <= scale <= 5.0:
             self._canonical_scale = float(scale)
+            self._local_armed = True
+
+    def reset_continuity(self) -> None:
+        self._local_armed = False
 
     def _result(
         self,
@@ -212,6 +217,8 @@ class AnchorLocalizer:
         )
 
     def locate_near(self, minimap: np.ndarray, hint: MapPosition) -> LocateResult:
+        if not self._local_armed:
+            return LocateResult(found=False, reason="anchor_requires_absolute_fix")
         if hint.region_id != self.region_id or hint.layer_id != "surface":
             return LocateResult(found=False, reason="anchor_namespace_mismatch")
         observed = self.detector.detect(minimap)
