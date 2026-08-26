@@ -56,3 +56,47 @@ nearest replay frame actually used an accepted edge-correlation fix.
 Use `N` and `B` to jump between the suggested times. A coarse click zooms the atlas;
 click the same position again to refine it, then press `N`. Press Enter once all
 suggested positions are set.
+
+## Measured result (2026-08-26)
+
+The five-minute scenario contains 3,000 frames and 39 manually placed positional
+checkpoints. It was evaluated without changing matcher or tracker thresholds.
+
+| Metric | Result | Hard target | Verdict |
+| --- | ---: | ---: | --- |
+| false locks | 0 | 0 | pass |
+| wrong region/layer locks | 0 | 0 | pass |
+| tracking coverage | 91.86% | >= 95% | fail |
+| longest unavailable streak | 1.80 s | <= 2 s | pass |
+| reacquisition P95 | 1.60 s | <= 3 s | pass |
+| stationary jitter P95 | 4.43 px | <= 5 px | pass |
+| positional error median | 4.69 px | diagnostic | — |
+| positional error P95 | 13.91 px | diagnostic | — |
+| accepted edge fixes | 8 | diagnostic | — |
+| absolute-fix age P95 / max | 5.30 / 13.40 s | diagnostic | — |
+
+Coverage is strongly localized by visual domain:
+
+| Scenario interval | Tracking coverage |
+| --- | ---: |
+| before the difficult ruins (0–103 s) | 95.81% |
+| difficult ruins (103–149 s) | 58.77% |
+| after the difficult ruins (149–301 s) | 99.27% |
+
+The accepted edge-correlation fix that coincides with a positional checkpoint at
+147.9 s has a 2.03 px error and a 0.1722 ambiguity margin. No accepted localization
+exceeded its checkpoint tolerance. The remaining edge fixes do not coincide closely
+enough with manually annotated frames to claim a positional error for each fix.
+
+### Decision
+
+The experiment confirms portability of the localization architecture and safe failure
+behaviour: ordinary Sumeru terrain works, and the difficult domain becomes unavailable
+instead of producing confident false locks. It does not yet prove release-grade
+coverage in sparse desert ruins.
+
+Do not lower global SIFT/tracker thresholds. The next controlled experiment should add
+a real higher-detail reference limited to the 103–149 s ruins domain, keep all current
+thresholds fixed, and compare it against this report. If no genuinely more detailed
+source exists, test a denser pyramid and then a gated fallback matcher as separate
+experiments.
