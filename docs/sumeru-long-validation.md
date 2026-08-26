@@ -100,3 +100,29 @@ a real higher-detail reference limited to the 103–149 s ruins domain, keep all
 thresholds fixed, and compare it against this report. If no genuinely more detailed
 source exists, test a denser pyramid and then a gated fallback matcher as separate
 experiments.
+
+### Low-observability classification
+
+The genuine AppSample detail experiment had already been completed before this long
+validation. It improved the isolated ruins scenario from 39.86% to 40.79% coverage,
+without regressions but also without a meaningful gain. Repeating or tuning that
+reference is therefore out of scope.
+
+The recorded sparse-ruins domain is classified as `low_observability`. The dedicated
+suite manifest may waive availability-only failures (`tracking_coverage` and an
+unreacquired short visibility interval), while preserving all safety and quality gates.
+False locks and wrong region/layer positions can never be waived. The raw failures stay
+visible in `observed_failures`; accepted limitations are listed separately in
+`waived_failures`.
+
+```powershell
+.venv\Scripts\genshin-navigator benchmark-suite `
+  benchmarks\sumeru-long-observability.example.json `
+  --config config.sumeru-portability-anchors.example.json `
+  --report datasets\local\benchmarks\sumeru-long-observability.json
+```
+
+This classification is a benchmark decision, not a runtime geofence: the recording
+does not establish the complete geographic boundary of the weak visual domain. Runtime
+behaviour remains conservative—unconfirmed positions become stale/LOST, navigation is
+frozen, and bounded motion cannot cross a hidden-minimap or loading interval.

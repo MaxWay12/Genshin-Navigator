@@ -15,6 +15,16 @@ from .scenario_kpis import DEFAULT_KPIS, evaluate_kpis
 
 
 SUITE_FORMAT_VERSION = 1
+LOW_OBSERVABILITY_CLASSIFICATION = "low_observability"
+LOW_OBSERVABILITY_WAIVERS = frozenset(
+    {
+        "tracking_coverage",
+        "reacquire_p95_seconds",
+        "longest_untracked_streak_seconds",
+    }
+)
+
+
 def load_suite_manifest(path: str | Path) -> tuple[Path, dict[str, object]]:
     manifest_path = Path(path).resolve()
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -26,6 +36,18 @@ def load_suite_manifest(path: str | Path) -> tuple[Path, dict[str, object]]:
     for item in scenarios:
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
             raise ValueError("Benchmark suite scenario is invalid")
+        classification = str(item.get("classification", "standard"))
+        waived = item.get("waive_failures", [])
+        if not isinstance(waived, list) or any(not isinstance(value, str) for value in waived):
+            raise ValueError("Benchmark suite waive_failures must be a string list")
+        if waived and classification != LOW_OBSERVABILITY_CLASSIFICATION:
+            raise ValueError(
+                "Failure waivers are only valid for low_observability scenarios"
+            )
+        unsupported = set(waived) - LOW_OBSERVABILITY_WAIVERS
+        if unsupported:
+            names = ", ".join(sorted(unsupported))
+            raise ValueError(f"Unsafe or unknown low-observability waiver: {names}")
     return manifest_path.parent, payload
 
 
@@ -123,8 +145,16 @@ def run_benchmark_suite(
         metrics = report["metrics"]
         assert isinstance(metrics, dict)
         failures = evaluate_kpis(metrics, kpis)
+        classification = str(item.get("classification", "standard"))
+        requested_waivers = set(item.get("waive_failures", []))
+        waived_failures = [
+            failure for failure in failures if failure in requested_waivers
+        ]
+        active_failures = [
+            failure for failure in failures if failure not in requested_waivers
+        ]
         gating = bool(item.get("gating", True))
-        passed = not failures
+        passed = not active_failures
         if gating and not passed:
             gating_passed = False
         results.append(
@@ -132,8 +162,12 @@ def run_benchmark_suite(
                 "name": str(item.get("name") or report.get("name") or scenario_path.name),
                 "path": str(item["path"]),
                 "gating": gating,
+                "classification": classification,
                 "passed": passed,
-                "failures": failures,
+                "failures": active_failures,
+                "observed_failures": failures,
+                "waived_failures": waived_failures,
+                "rationale": str(item.get("rationale") or ""),
                 "metrics": metrics,
             }
         )

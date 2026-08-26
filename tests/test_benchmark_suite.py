@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from genshin_navigator.benchmark_suite import run_benchmark_suite
+from genshin_navigator.benchmark_suite import load_suite_manifest, run_benchmark_suite
 from test_scenario import FakeLocator, app_config
 
 
@@ -101,6 +101,49 @@ class BenchmarkSuiteTests(unittest.TestCase):
                 report["scenarios"][0]["failures"],
                 ["tracking_coverage", "position_checkpoints"],
             )
+
+    def test_low_observability_keeps_failure_visible_but_can_waive_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = self._manifest(Path(temporary))
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            payload["scenarios"] = [
+                {
+                    "name": "known sparse domain",
+                    "path": "gate",
+                    "gating": True,
+                    "classification": "low_observability",
+                    "waive_failures": ["tracking_coverage"],
+                    "rationale": "A real detail reference was insufficient.",
+                }
+            ]
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            weak = scenario_report()
+            weak["metrics"]["required_tracking_coverage"] = 0.58
+            with patch(
+                "genshin_navigator.benchmark_suite.evaluate_scenario",
+                return_value=weak,
+            ):
+                report = run_benchmark_suite(manifest, app_config(), FakeLocator())
+            scenario = report["scenarios"][0]
+            self.assertTrue(report["passed"])
+            self.assertTrue(scenario["passed"])
+            self.assertEqual(scenario["failures"], [])
+            self.assertEqual(scenario["observed_failures"], ["tracking_coverage"])
+            self.assertEqual(scenario["waived_failures"], ["tracking_coverage"])
+
+    def test_low_observability_cannot_waive_false_locks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = self._manifest(Path(temporary))
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            payload["scenarios"][0].update(
+                {
+                    "classification": "low_observability",
+                    "waive_failures": ["false_locks"],
+                }
+            )
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Unsafe or unknown"):
+                load_suite_manifest(manifest)
 
 
 if __name__ == "__main__":
