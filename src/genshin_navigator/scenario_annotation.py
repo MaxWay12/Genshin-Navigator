@@ -20,6 +20,18 @@ class AtlasViewport:
     height: int
     atlas_width: int
     atlas_height: int
+    source_left: float = 0.0
+    source_top: float = 0.0
+    source_width: float | None = None
+    source_height: float | None = None
+
+    @property
+    def mapped_width(self) -> float:
+        return self.source_width or float(self.atlas_width)
+
+    @property
+    def mapped_height(self) -> float:
+        return self.source_height or float(self.atlas_height)
 
     def to_atlas(self, x: int, y: int) -> tuple[float, float] | None:
         if not (
@@ -28,14 +40,20 @@ class AtlasViewport:
         ):
             return None
         return (
-            (x - self.left) * self.atlas_width / self.width,
-            (y - self.top) * self.atlas_height / self.height,
+            self.source_left + (x - self.left) * self.mapped_width / self.width,
+            self.source_top + (y - self.top) * self.mapped_height / self.height,
         )
 
     def to_canvas(self, x: float, y: float) -> tuple[int, int]:
         return (
-            round(self.left + x * self.width / self.atlas_width),
-            round(self.top + y * self.height / self.atlas_height),
+            round(self.left + (x - self.source_left) * self.width / self.mapped_width),
+            round(self.top + (y - self.source_top) * self.height / self.mapped_height),
+        )
+
+    def contains_atlas(self, x: float, y: float) -> bool:
+        return bool(
+            self.source_left <= x < self.source_left + self.mapped_width
+            and self.source_top <= y < self.source_top + self.mapped_height
         )
 
 
@@ -135,18 +153,53 @@ class ScenarioAnnotationView:
         self.session = session
         self.viewport: AtlasViewport | None = None
         self.saved = False
+        self.zoom = 1.0
+        self.zoom_center: tuple[float, float] | None = None
+
+    def _atlas_region(self, available_w: int, available_h: int) -> tuple[int, int, int, int]:
+        atlas_h, atlas_w = self.session.atlas.shape[:2]
+        if self.zoom <= 1.0 or self.zoom_center is None:
+            return 0, 0, atlas_w, atlas_h
+        crop_w = max(1, round(atlas_w / self.zoom))
+        crop_h = max(1, round(crop_w * available_h / available_w))
+        if crop_h > atlas_h:
+            crop_h = max(1, round(atlas_h / self.zoom))
+            crop_w = max(1, round(crop_h * available_w / available_h))
+        center_x, center_y = self.zoom_center
+        x = max(0, min(atlas_w - crop_w, round(center_x - crop_w / 2)))
+        y = max(0, min(atlas_h - crop_h, round(center_y - crop_h / 2)))
+        return x, y, crop_w, crop_h
+
+    def _move(self, delta: int) -> None:
+        self.session.move(delta)
+        self.zoom = 1.0
+        self.zoom_center = None
 
     def _render(self) -> np.ndarray:
         canvas = np.full((820, 1420, 3), (13, 22, 31), np.uint8)
         atlas = self.session.atlas
         available_w, available_h = 1125, 745
-        scale = min(available_w / atlas.shape[1], available_h / atlas.shape[0])
-        width, height = round(atlas.shape[1] * scale), round(atlas.shape[0] * scale)
+        source_x, source_y, source_w, source_h = self._atlas_region(
+            available_w, available_h
+        )
+        shown_atlas = atlas[source_y : source_y + source_h, source_x : source_x + source_w]
+        scale = min(available_w / source_w, available_h / source_h)
+        width, height = round(source_w * scale), round(source_h * scale)
         left, top = 280 + (available_w - width) // 2, 55 + (available_h - height) // 2
-        resized = cv2.resize(atlas, (width, height), interpolation=cv2.INTER_AREA)
+        interpolation = cv2.INTER_LINEAR if scale > 1 else cv2.INTER_AREA
+        resized = cv2.resize(shown_atlas, (width, height), interpolation=interpolation)
         canvas[top : top + height, left : left + width] = resized
         self.viewport = AtlasViewport(
-            left, top, width, height, atlas.shape[1], atlas.shape[0]
+            left,
+            top,
+            width,
+            height,
+            atlas.shape[1],
+            atlas.shape[0],
+            float(source_x),
+            float(source_y),
+            float(source_w),
+            float(source_h),
         )
 
         frame = self.session.frames[self.session.frame_index]
@@ -160,21 +213,26 @@ class ScenarioAnnotationView:
         if checkpoint is not None:
             position = checkpoint["position"]
             assert isinstance(position, dict)
-            point = self.viewport.to_canvas(float(position["x"]), float(position["y"]))
-            cv2.circle(canvas, point, 9, (0, 255, 255), 2, cv2.LINE_AA)
-            cv2.drawMarker(canvas, point, (0, 255, 255), cv2.MARKER_CROSS, 18, 2)
+            if self.viewport.contains_atlas(float(position["x"]), float(position["y"])):
+                point = self.viewport.to_canvas(float(position["x"]), float(position["y"]))
+                cv2.circle(canvas, point, 9, (0, 255, 255), 2, cv2.LINE_AA)
+                cv2.drawMarker(canvas, point, (0, 255, 255), cv2.MARKER_CROSS, 18, 2)
 
         index_text = f"frame {self.session.frame_index + 1}/{len(self.session.frames)}"
         time_text = f"t={self.session.current_timestamp:.3f}s"
-        count_text = f"checkpoints={len(self.session.checkpoints)} tolerance={self.session.tolerance_px:.0f}px"
+        count_text = (
+            f"checkpoints={len(self.session.checkpoints)} "
+            f"tolerance={self.session.tolerance_px:.0f}px zoom={self.zoom:.0f}x"
+        )
         cv2.putText(canvas, index_text, (15, 365), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (235, 235, 235), 1, cv2.LINE_AA)
         cv2.putText(canvas, time_text, (15, 395), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (235, 235, 235), 1, cv2.LINE_AA)
         cv2.putText(canvas, count_text, (15, 425), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 220, 120), 1, cv2.LINE_AA)
         instructions = [
             "A/D or arrows: frame",
-            "Left click atlas: set/replace",
+            "J/L: 10 frames   Home/End",
+            "Left click: area, then refine at 4x",
             "Right click or Delete: remove",
-            "+/-: tolerance",
+            "Z: reset zoom   +/-: tolerance",
             "Enter: save   Esc: cancel",
         ]
         for index, line in enumerate(instructions):
@@ -186,8 +244,13 @@ class ScenarioAnnotationView:
             point = self.viewport.to_atlas(x, y)
             if point is not None:
                 self.session.set_checkpoint(*point)
+                if self.zoom <= 1.0:
+                    self.zoom = 4.0
+                    self.zoom_center = point
         elif event == cv2.EVENT_RBUTTONDOWN:
             self.session.remove_checkpoint()
+            self.zoom = 1.0
+            self.zoom_center = None
 
     def run(self) -> bool:
         cv2.namedWindow(self.WINDOW, cv2.WINDOW_NORMAL)
@@ -206,15 +269,34 @@ class ScenarioAnnotationView:
                     self.saved = True
                     return True
                 if key in (ord("a"), ord("A"), 2424832):
-                    self.session.move(-1)
+                    self._move(-1)
                 elif key in (ord("d"), ord("D"), 2555904):
-                    self.session.move(1)
+                    self._move(1)
+                elif key in (ord("j"), ord("J"), 2162688):
+                    self._move(-10)
+                elif key in (ord("l"), ord("L"), 2228224):
+                    self._move(10)
+                elif key == 2359296:
+                    self.session.frame_index = 0
+                    self.zoom = 1.0
+                    self.zoom_center = None
+                elif key == 2293760:
+                    self.session.frame_index = len(self.session.frames) - 1
+                    self.zoom = 1.0
+                    self.zoom_center = None
                 elif key in (8, 46, 3014656):
                     self.session.remove_checkpoint()
+                    self.zoom = 1.0
+                    self.zoom_center = None
+                elif key in (ord("z"), ord("Z")):
+                    self.zoom = 1.0
+                    self.zoom_center = None
                 elif key in (ord("+"), ord("=")):
                     self.session.tolerance_px = min(500.0, self.session.tolerance_px + 5.0)
                 elif key in (ord("-"), ord("_")):
-                    self.session.tolerance_px = max(5.0, self.session.tolerance_px - 5.0)
+                    # Below 10 px, click placement and tracker smoothing become a
+                    # larger source of error than localization itself.
+                    self.session.tolerance_px = max(10.0, self.session.tolerance_px - 5.0)
         finally:
             cv2.destroyWindow(self.WINDOW)
 

@@ -43,6 +43,10 @@ class ScenarioAnnotationTests(unittest.TestCase):
             annotation.set_checkpoint(50, 40)
             annotation.set_checkpoint(60, 45)
             self.assertEqual(len(annotation.checkpoints), 1)
+            annotation.move(100)
+            self.assertEqual(annotation.frame_index, 0)
+            annotation.move(-100)
+            self.assertEqual(annotation.frame_index, 0)
             annotation.save()
             _, payload = load_scenario(root)
             checkpoint = payload["checkpoints"][0]
@@ -70,6 +74,10 @@ class ScenarioAnnotationTests(unittest.TestCase):
         self.assertEqual(viewport.to_atlas(300, 150), (400.0, 200.0))
         self.assertEqual(viewport.to_canvas(400, 200), (300, 150))
         self.assertIsNone(viewport.to_atlas(50, 50))
+        zoomed = AtlasViewport(100, 50, 400, 200, 800, 400, 200, 100, 400, 200)
+        self.assertEqual(zoomed.to_atlas(300, 150), (400.0, 200.0))
+        self.assertEqual(zoomed.to_canvas(400, 200), (300, 150))
+        self.assertFalse(zoomed.contains_atlas(100, 50))
 
     def test_loader_rejects_checkpoint_outside_recording(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
