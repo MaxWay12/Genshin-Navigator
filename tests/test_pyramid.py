@@ -29,6 +29,32 @@ class LocalStubMatcher(StubMatcher):
         return self.local_result
 
 
+class EdgeStub:
+    def __init__(self, result: LocateResult):
+        self.result = result
+        self.calls = 0
+
+    def locate(self, minimap: np.ndarray) -> LocateResult:
+        self.calls += 1
+        return self.result
+
+
+class MotionStub:
+    def __init__(self, result: LocateResult):
+        self.result = result
+        self.calls = 0
+
+    def locate_near(self, minimap, position, canonical_scale):
+        self.calls += 1
+        return self.result
+
+    def observe(self, minimap):
+        pass
+
+    def reset(self):
+        pass
+
+
 class PyramidMatcherTests(unittest.TestCase):
     def test_surface_label_uses_matcher_region(self) -> None:
         level = PyramidLevel(
@@ -149,6 +175,72 @@ class PyramidMatcherTests(unittest.TestCase):
         )
 
         self.assertEqual(result.reference_id, "certain")
+
+    def test_weak_global_candidate_allows_absolute_fallback(self) -> None:
+        weak = PyramidLevel(
+            id="weak",
+            matcher=StubMatcher(
+                LocateResult(found=True, x_px=10, y_px=10, confidence=0.2, inliers=8)
+            ),
+            local_to_canonical=np.eye(3),
+        )
+        edge = EdgeStub(
+            LocateResult(
+                found=True,
+                x_px=40,
+                y_px=45,
+                confidence=0.5,
+                inliers=12,
+                match_method="edge_correlation",
+            )
+        )
+        result = PyramidMatcher(
+            (100, 100), [weak], edge_localizer=edge  # type: ignore[arg-type]
+        ).locate(np.zeros((20, 20, 3), dtype=np.uint8))
+        self.assertEqual(result.match_method, "edge_correlation")
+        self.assertEqual(edge.calls, 1)
+
+    def test_weak_local_candidate_allows_motion_fallback(self) -> None:
+        from genshin_navigator.config import LocalSearchConfig
+
+        weak = PyramidLevel(
+            id="weak",
+            matcher=LocalStubMatcher(
+                LocateResult(found=True, x_px=50, y_px=50, confidence=0.2, inliers=8)
+            ),
+            local_to_canonical=np.eye(3),
+        )
+        motion = MotionStub(
+            LocateResult(
+                found=True,
+                x_px=51,
+                y_px=50,
+                confidence=0.58,
+                inliers=12,
+                match_method="motion",
+            )
+        )
+        matcher = PyramidMatcher(
+            (100, 100), [weak], region_id="sumeru_desert",
+            motion_localizer=motion,  # type: ignore[arg-type]
+        )
+        hint = MapPosition(
+            region_id="sumeru_desert",
+            layer_id="surface",
+            coordinate_space=CoordinateSpace.SURFACE_ATLAS,
+            x=50,
+            y=50,
+            confidence=0.9,
+            state=PositionState.TRACKING,
+            timestamp=1.0,
+        )
+        result = matcher.locate_near(
+            np.zeros((20, 20, 3), dtype=np.uint8),
+            hint,
+            LocalSearchConfig(radius_px=10),
+        )
+        self.assertEqual(result.match_method, "motion")
+        self.assertEqual(motion.calls, 1)
 
     def test_underground_search_uses_layer_local_coordinates(self) -> None:
         from genshin_navigator.config import LocalSearchConfig

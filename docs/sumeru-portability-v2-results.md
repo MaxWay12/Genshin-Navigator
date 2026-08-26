@@ -50,12 +50,34 @@ The variant caused no previously passing scenario to fail, but neither the
 ruins scenario (91.38%) nor the recorded teleport scenario (92.47%) reached the
 95% coverage gate. It therefore remains disabled by default.
 
+## Weak-evidence dispatch and absolute edge correlation
+
+The remaining unavailable frames were not hard SIFT failures. Many contained a
+formally valid SIFT transform with confidence between 0.21 and 0.34, below the
+Tracker acceptance threshold. Pyramid dispatch previously returned that weak
+candidate immediately, preventing semantic anchors and bounded motion from
+running. Weak primary evidence is now retained for diagnostics while the
+strict fallback chain is evaluated; all matcher and Tracker thresholds remain
+unchanged.
+
+For cold starts in the same sparse domain, an optional north-up edge-correlation
+localizer searches fixed map scales and small rotations. It accepts only a
+strong, spatially unique peak. Across all 15 annotated ruins checkpoints it
+localized from scratch with 1.22–11.52 canonical-pixel error. This method is
+also disabled by default and belongs only to the Sumeru portability profile.
+
+The combined candidate reached 100% tracking coverage in sparse ruins, with a
+0.05-second longest unavailable interval, 4.97-pixel stationary jitter, zero
+false locks, and zero wrong layers. The two ordinary desert scenarios stayed
+passing. The recorded teleport scenario remained at 92.47% coverage with zero
+false locks and 1.70-second reacquisition; its manifest currently marks the
+entire short sequence as required, so the allowed reacquisition interval alone
+exceeds the 5% coverage budget.
+
 ## Verdict
 
-Sumeru portability is still incomplete. A higher-resolution cartographic image
-alone does not solve the sparse visual domain. Semantic anchors and bounded
-relative motion substantially shorten losses, but the combined candidate still
-misses the coverage gate. It is a safe experimental profile, not yet the
-default Sumeru localizer. The next experiment should improve absolute evidence
-in sparse areas instead of relaxing global thresholds or extending dead
-reckoning.
+Semantic anchors, bounded relative motion, correct weak-evidence dispatch, and
+unique edge correlation solve the recorded sparse-ruins case without weakening
+global thresholds. Fontaine remains regression-free. Sumeru is still an
+experimental portability profile until the teleport scenario phases are
+correctly annotated and the full suite passes its gating policy.

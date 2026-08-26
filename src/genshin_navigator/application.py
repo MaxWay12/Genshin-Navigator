@@ -15,6 +15,7 @@ from .capture import crop_roi, grab_screen, load_image
 from .config import AppConfig
 from .data_store import DataBundle, open_data_bundle
 from .debug_view import DebugMapView
+from .edge_correlation import EdgeCorrelationLocalizer
 from .failure_recorder import DiagnosticContext, FailureRecorder
 from .hotkeys import HotkeyAction
 from .matcher import LocateResult, MinimapMatcher
@@ -37,11 +38,22 @@ def build_locator(config: AppConfig) -> Locator:
             RelativeMotionLocalizer(config.motion_fallback, config.data.region_id)
             if config.motion_fallback.enabled else None
         )
+        edge_localizer = (
+            EdgeCorrelationLocalizer(
+                load_image(config.map_path),
+                config.edge_correlation,
+                config.data.region_id,
+            )
+            if config.edge_correlation.enabled and config.map_path is not None
+            else None
+        )
         return load_pyramid(
             config.pyramid_path,
             config.matcher,
             anchor_localizer=anchor_localizer,
             motion_localizer=motion_localizer,
+            edge_localizer=edge_localizer,
+            minimum_usable_confidence=config.tracker.min_confidence,
         )
     if config.map_path is None:
         raise ValueError("A map_path or pyramid_path is required")

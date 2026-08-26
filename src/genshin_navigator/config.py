@@ -135,6 +135,42 @@ class MotionFallbackConfig:
 
 
 @dataclass(frozen=True)
+class EdgeCorrelationConfig:
+    """Absolute fallback for low-feature, north-up surface minimaps."""
+
+    enabled: bool = False
+    scales: tuple[float, ...] = (0.80, 0.83, 0.86)
+    rotations_degrees: tuple[float, ...] = (0.0,)
+    min_score: float = 0.32
+    min_peak_margin: float = 0.07
+    exclusion_radius_px: float = 100.0
+    canny_low: int = 30
+    canny_high: int = 100
+    coarse_scale: float = 0.35
+    coarse_candidates: int = 3
+    refine_radius_px: int = 16
+    confidence: float = 0.52
+
+    def __post_init__(self) -> None:
+        if not self.scales or any(not 0.2 <= value <= 5.0 for value in self.scales):
+            raise ValueError("edge correlation scales are invalid")
+        if not self.rotations_degrees or any(abs(value) > 30 for value in self.rotations_degrees):
+            raise ValueError("edge correlation rotations are invalid")
+        if not 0 < self.min_score <= 1 or not 0 <= self.min_peak_margin <= 1:
+            raise ValueError("edge correlation score thresholds are invalid")
+        if self.exclusion_radius_px <= 0:
+            raise ValueError("edge correlation exclusion radius must be positive")
+        if not 0 <= self.canny_low < self.canny_high <= 255:
+            raise ValueError("edge correlation Canny thresholds are invalid")
+        if not 0.1 <= self.coarse_scale <= 0.75:
+            raise ValueError("edge correlation coarse scale is invalid")
+        if self.coarse_candidates < 2 or self.refine_radius_px < 2:
+            raise ValueError("edge correlation refinement settings are invalid")
+        if not 0 < self.confidence <= 1:
+            raise ValueError("edge correlation confidence must be within (0, 1]")
+
+
+@dataclass(frozen=True)
 class FailureRecorderConfig:
     enabled: bool = False
     output_dir: Path = Path("artifacts/failures")
@@ -311,6 +347,7 @@ class AppConfig:
         default_factory=AnchorLocalizationConfig
     )
     motion_fallback: MotionFallbackConfig = field(default_factory=MotionFallbackConfig)
+    edge_correlation: EdgeCorrelationConfig = field(default_factory=EdgeCorrelationConfig)
     failure_recorder: FailureRecorderConfig = field(default_factory=FailureRecorderConfig)
     screen_gate: ScreenGateConfig = field(default_factory=ScreenGateConfig)
     poi: PoiConfig = field(default_factory=PoiConfig)
@@ -375,6 +412,12 @@ def load_config(path: str | Path) -> AppConfig:
     }
     if any(path is None for path in anchor_templates.values()):
         raise ValueError("anchor_localization template paths must not be null")
+
+    edge_raw = dict(raw.get("edge_correlation", {}))
+    edge_scales = tuple(edge_raw.pop("scales", (0.80, 0.83, 0.86)))
+    edge_rotations = tuple(
+        edge_raw.pop("rotations_degrees", (0.0,))
+    )
 
     poi_raw = dict(raw.get("poi", {}))
     poi_catalog = resolve_optional(poi_raw.pop("catalog_path", None))
@@ -453,6 +496,11 @@ def load_config(path: str | Path) -> AppConfig:
             **anchor_raw,
         ),
         motion_fallback=MotionFallbackConfig(**raw.get("motion_fallback", {})),
+        edge_correlation=EdgeCorrelationConfig(
+            scales=edge_scales,
+            rotations_degrees=edge_rotations,
+            **edge_raw,
+        ),
         failure_recorder=FailureRecorderConfig(
             output_dir=recorder_output, **recorder_raw
         ),

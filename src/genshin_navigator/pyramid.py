@@ -12,6 +12,7 @@ import numpy as np
 from .anchor_localization import AnchorLocalizer
 from .capture import load_image
 from .config import LocalSearchConfig, MatcherConfig
+from .edge_correlation import EdgeCorrelationLocalizer
 from .matcher import CandidateMatch, LocateResult, MinimapMatcher, UndergroundMinimapMatcher
 from .motion_localization import RelativeMotionLocalizer
 from .position import CoordinateSpace, MapPosition
@@ -70,6 +71,8 @@ class PyramidMatcher:
         region_id: str = "unknown",
         anchor_localizer: AnchorLocalizer | None = None,
         motion_localizer: RelativeMotionLocalizer | None = None,
+        edge_localizer: EdgeCorrelationLocalizer | None = None,
+        minimum_usable_confidence: float = 0.35,
     ):
         width, height = canonical_size
         if width <= 0 or height <= 0:
@@ -78,12 +81,16 @@ class PyramidMatcher:
             raise ValueError("Reference pyramid has no levels")
         if not 0 < early_accept_confidence <= 1:
             raise ValueError("early_accept_confidence must be within (0, 1]")
+        if not 0 < minimum_usable_confidence <= 1:
+            raise ValueError("minimum_usable_confidence must be within (0, 1]")
         self.canonical_size = canonical_size
         self.levels = levels
         self.early_accept_confidence = early_accept_confidence
         self.region_id = region_id
         self.anchor_localizer = anchor_localizer
         self.motion_localizer = motion_localizer
+        self.edge_localizer = edge_localizer
+        self.minimum_usable_confidence = minimum_usable_confidence
         self._last_canonical_scale = 1.0
 
     def _observe_primary(self, minimap: np.ndarray, result: LocateResult) -> None:
@@ -248,7 +255,7 @@ class PyramidMatcher:
                 failures.append(self._tag_failure(local_result, level))
 
         best_confidence = max((item.confidence for item in candidates), default=0.0)
-        if best_confidence < 0.35:
+        if best_confidence < self.minimum_usable_confidence:
             fallback_attempts = sorted(
                 (
                     (level, result)
@@ -267,7 +274,7 @@ class PyramidMatcher:
                 else:
                     failures.append(self._tag_failure(fallback, level))
 
-        if candidates:
+        if candidates and max(item.confidence for item in candidates) >= self.minimum_usable_confidence:
             best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
             self._observe_primary(minimap, best)
             return self._with_candidates(best, candidates + failures)
@@ -276,6 +283,15 @@ class PyramidMatcher:
             if anchored.found:
                 self._observe_primary(minimap, anchored)
                 return self._with_candidates(anchored, failures + [anchored])
+        if self.edge_localizer is not None:
+            correlated = self.edge_localizer.locate(minimap)
+            if correlated.found:
+                self._observe_primary(minimap, correlated)
+                return self._with_candidates(correlated, failures + [correlated])
+            failures.append(correlated)
+        if candidates:
+            best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            return self._with_candidates(best, candidates + failures)
         best = max(failures, key=lambda item: (item.inliers, item.matches, item.confidence))
         best = replace(best, reason="no_pyramid_level_matched")
         return self._with_candidates(best, failures)
@@ -346,10 +362,14 @@ class PyramidMatcher:
                     failures.append(replace(canonical_result, found=False, reason="outside_local_search_radius"))
             else:
                 failures.append(self._tag_failure(local_result, level))
+        weak_candidates: list[LocateResult] = []
         if candidates:
             best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
-            self._observe_primary(minimap, best)
-            return self._with_candidates(best, candidates + failures)
+            if best.confidence >= self.minimum_usable_confidence:
+                self._observe_primary(minimap, best)
+                return self._with_candidates(best, candidates + failures)
+            weak_candidates = candidates.copy()
+            candidates.clear()
         for level in fallback_levels:
             fallback = level.matcher.locate_fallback(minimap)  # type: ignore[attr-defined]
             if not fallback.found:
@@ -375,6 +395,12 @@ class PyramidMatcher:
             if anchored.found:
                 self._observe_primary(minimap, anchored)
                 return self._with_candidates(anchored, failures + [anchored])
+        if weak_candidates:
+            best = max(
+                weak_candidates,
+                key=lambda item: (item.confidence, item.inliers, item.matches),
+            )
+            return self._with_candidates(best, weak_candidates + failures)
         if failures:
             best = max(failures, key=lambda item: (item.inliers, item.matches, item.confidence))
             best = replace(best, reason="no_local_level_matched")
@@ -393,6 +419,8 @@ def load_pyramid(
     config: MatcherConfig | None = None,
     anchor_localizer: AnchorLocalizer | None = None,
     motion_localizer: RelativeMotionLocalizer | None = None,
+    edge_localizer: EdgeCorrelationLocalizer | None = None,
+    minimum_usable_confidence: float = 0.35,
 ) -> PyramidMatcher:
     manifest_path = Path(path).resolve()
     with manifest_path.open("r", encoding="utf-8") as stream:
@@ -447,4 +475,6 @@ def load_pyramid(
         region_id=region_id,
         anchor_localizer=anchor_localizer,
         motion_localizer=motion_localizer,
+        edge_localizer=edge_localizer,
+        minimum_usable_confidence=minimum_usable_confidence,
     )
