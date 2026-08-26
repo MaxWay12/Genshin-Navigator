@@ -4,9 +4,12 @@
   "kpis": {
     "max_false_locks": 0,
     "max_wrong_layer_positions": 0,
-    "max_reacquire_seconds": 3.0,
+    "min_tracking_coverage": 0.95,
+    "max_untracked_streak_seconds": 2.0,
+    "max_reacquire_p95_seconds": 3.0,
     "max_one_frame_layer_runs": 0,
-    "max_stationary_jitter_p95_px": 5.0
+    "max_stationary_jitter_p95_px": 5.0,
+    "min_position_checkpoints": 2
   },
   "scenarios": [
     {
@@ -22,6 +25,11 @@
     {
       "name": "desert second landmark",
       "path": "../datasets/local/scenarios/sumeru_desert_landmark",
+      "gating": true
+    },
+    {
+      "name": "desert sparse ruins",
+      "path": "../datasets/local/scenarios/sumeru_desert_ruins",
       "gating": true
     }
   ]

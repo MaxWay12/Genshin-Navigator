@@ -510,4 +510,78 @@ acquire/reacquire, длительность `LOST`, stationary jitter и сре�
 Длительность `LOST` учитывает только время с видимой миникартой; открытая карта,
 загрузка и Alt+Tab считаются паузой screen gate.
 Критерии контрольной проверки: false locks = 0, нет одно-кадровых смен слоя,
-reacquire ≤ 3 с и P95 jitter ≤ 5 atlas-px.
+tracking coverage ≥ 95%, longest untracked streak ≤ 2 с, reacquire P95 ≤ 3 с и
+P95 jitter ≤ 5 atlas-px. Coverage и untracked streak считаются только внутри
+`tracking: required` при видимой миникарте.
+
+### Sumeru portability v2
+
+Четыре локальные записи создаются текущим base-only конфигом; кадры остаются в
+`datasets/local`:
+
+```powershell
+.venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_walk `
+  --config config.sumeru-portability.example.json --duration 20 --name "desert walk and stop" `
+  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5
+
+.venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_teleport `
+  --config config.sumeru-portability.example.json --duration 30 --name "desert teleport" `
+  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5
+
+.venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_landmark `
+  --config config.sumeru-portability.example.json --duration 20 --name "desert second landmark" `
+  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5
+
+.venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_ruins `
+  --config config.sumeru-portability.example.json --duration 20 --name "desert sparse ruins" `
+  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5
+```
+
+После записи контрольные позиции ставятся кликом по каноническому атласу:
+
+```powershell
+.venv\Scripts\genshin-navigator annotate-scenario `
+  datasets\local\scenarios\sumeru_desert_walk `
+  --config config.sumeru-portability.example.json
+```
+
+`A/D` или стрелки выбирают кадр, левый клик ставит/заменяет checkpoint, правый
+клик удаляет, `+/-` меняет допуск, Enter сохраняет атомарно, Esc выходит без
+изменений. Для каждого gating-сценария нужны минимум две позиции; для движения
+рекомендуются начало, середина и конец.
+
+Base-only baseline запускается отдельно и не перезаписывается кандидатом:
+
+```powershell
+.venv\Scripts\genshin-navigator benchmark-suite `
+  benchmarks\sumeru-desert-portability.example.json `
+  --config config.sumeru-portability.example.json `
+  --report datasets\local\portability\sumeru-base-v2.json
+```
+
+Detail-reference должен быть настоящим более подробным crop, а не resize N1.
+Сначала его регистрируют через `scripts/register_reference.py`, затем собирают
+candidate pyramid. Скрипт отклонит регистрацию слабее 20 inliers или с median
+error выше 2 canonical px:
+
+```powershell
+.venv\Scripts\python scripts\build_detail_pyramid.py `
+  datasets\local\references\hoyolab_sumeru_desert_n1\surface_pyramid.json `
+  datasets\local\references\sumeru_ruins_detail\ruins.png `
+  datasets\local\references\sumeru_ruins_detail\registration.json `
+  datasets\local\references\hoyolab_sumeru_desert_n1\detail_pyramid.json `
+  --id sumeru_ruins_detail --source appsample --resolution-scale 2
+```
+
+Итоговое сравнение требует также Fontaine regression suite. Без него кандидат
+может получить только verdict `candidate_passed_regression_not_run`:
+
+```powershell
+.venv\Scripts\genshin-navigator benchmark-compare `
+  benchmarks\sumeru-desert-portability.example.json `
+  --baseline-config config.sumeru-portability.example.json `
+  --candidate-config config.sumeru-portability-detail.example.json `
+  --regression-manifest benchmarks\fontaine-golden.example.json `
+  --regression-config config.json `
+  --report datasets\local\portability\sumeru-detail-comparison.json
+```
