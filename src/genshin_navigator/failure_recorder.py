@@ -211,6 +211,37 @@ class FailureRecorder:
         self._post_remaining = 0
         self._buffer.clear()
 
+    def _incident_outcome(self) -> dict[str, object]:
+        assert self._incident is not None and self._trigger_index is not None
+        if self._trigger_reason == "manual_report":
+            return {
+                "outcome": "manual_report",
+                "recovery_seconds": None,
+                "recovery_method": None,
+                "recovery_reference_id": None,
+            }
+        trigger_timestamp = self._incident[self._trigger_index].timestamp
+        for frame in self._incident[self._trigger_index + 1 :]:
+            tracker = frame.tracker
+            if (
+                tracker.get("accepted") is True
+                and tracker.get("state") == TrackerState.TRACKING.value
+                and tracker.get("stale") is not True
+            ):
+                method = frame.localization.get("match_method")
+                return {
+                    "outcome": "transient_recovered",
+                    "recovery_seconds": round(frame.timestamp - trigger_timestamp, 4),
+                    "recovery_method": method if isinstance(method, str) else "sift",
+                    "recovery_reference_id": tracker.get("reference_id"),
+                }
+        return {
+            "outcome": "unresolved",
+            "recovery_seconds": None,
+            "recovery_method": None,
+            "recovery_reference_id": None,
+        }
+
     def _flush(self) -> Path | None:
         assert (
             self._incident is not None
@@ -247,11 +278,13 @@ class FailureRecorder:
                 }
             )
 
+        outcome = self._incident_outcome()
         metadata = {
             "format_version": 4,
             "privacy": "Only the configured minimap crop is stored; full game frames are not recorded.",
             "trigger": self._trigger_reason,
             "trigger_frame_index": self._trigger_index,
+            **outcome,
             "last_known_position": self._last_known(self._incident, self._trigger_index),
             "environment": {
                 "app_version": self.context.app_version,

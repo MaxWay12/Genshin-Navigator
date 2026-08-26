@@ -1,0 +1,14 @@
+{
+  "format_version": 1,
+  "name": "Sumeru live recovery regression",
+  "criteria": {
+    "require_recovery": true,
+    "max_recovery_seconds": 1.0
+  },
+  "bundles": [
+    {
+      "name": "example transient interruption",
+      "path": "../datasets/local/portability/failures/failure_EXAMPLE"
+    }
+  ]
+}

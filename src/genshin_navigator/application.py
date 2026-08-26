@@ -247,9 +247,9 @@ class LiveApplication:
                 if recorder.active and not was_active:
                     print("tracking interruption; collecting minimap diagnostics...", flush=True)
                 if incident is not None:
-                    print(f"failure incident saved: {incident}", flush=True)
+                    print(f"tracking diagnostic saved: {incident}", flush=True)
                     view.notify(
-                        f"Report: {incident.parent.name}/{incident.name}", 6.0
+                        f"Diagnostic: {incident.parent.name}/{incident.name}", 6.0
                     )
                 elapsed = max(now - previous, 1e-6)
                 previous = now
@@ -259,7 +259,7 @@ class LiveApplication:
         finally:
             incident = recorder.close()
             if incident is not None:
-                print(f"partial failure incident saved: {incident}", flush=True)
+                print(f"partial tracking diagnostic saved: {incident}", flush=True)
             view.close()
 
     def record_diagnostic(self, duration_seconds: float) -> Path:

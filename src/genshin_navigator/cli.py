@@ -24,6 +24,7 @@ from .data_store import (
 )
 from .evaluation import evaluate_dataset
 from .diagnostics import replay_diagnostic
+from .diagnostic_suite import run_diagnostic_suite
 from .pyramid import Locator, PyramidMatcher
 from .hoyolab_poi import (
     DEFAULT_LABEL_KINDS,
@@ -203,6 +204,12 @@ def _parser() -> argparse.ArgumentParser:
     diagnostic_replay.add_argument("bundle")
     diagnostic_replay.add_argument("--config", default="config.json")
     diagnostic_replay.add_argument("--report", default=None)
+    diagnostic_suite = subparsers.add_parser(
+        "diagnostic-suite", help="Replay a recovery regression suite of diagnostic bundles"
+    )
+    diagnostic_suite.add_argument("manifest")
+    diagnostic_suite.add_argument("--config", default="config.json")
+    diagnostic_suite.add_argument("--report", required=True)
     return parser
 
 
@@ -685,6 +692,11 @@ def main(argv: list[str] | None = None) -> int:
                 report_path.write_text(rendered, encoding="utf-8")
             print(rendered)
             return 0
+        if args.command == "diagnostic-suite":
+            report = run_diagnostic_suite(args.manifest, config, matcher)
+            write_report_atomic(report, args.report)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["passed"] else 2
         if args.command == "calibrate-distance":
             return _run_calibration(config, matcher, args.output, args.samples)
         if args.command == "evaluate-sequence":

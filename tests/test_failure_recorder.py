@@ -106,6 +106,34 @@ class FailureRecorderTests(unittest.TestCase):
             stored = cv2.imread(str(incident / "minimap_000.png"))
             self.assertEqual(stored.shape, minimap.shape)
             self.assertEqual(metadata["format_version"], 4)
+            self.assertEqual(metadata["outcome"], "unresolved")
+            self.assertIsNone(metadata["recovery_seconds"])
+
+    def test_classifies_short_loss_that_recovers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            recorder = FailureRecorder(
+                FailureRecorderConfig(
+                    enabled=True,
+                    output_dir=Path(temporary),
+                    pre_frames=2,
+                    post_frames=2,
+                    cooldown_seconds=0,
+                )
+            )
+            minimap = np.zeros((8, 8, 3), dtype=np.uint8)
+            found = LocateResult(found=True, x_px=1, y_px=2, match_method="edge_correlation")
+            missing = LocateResult(found=False, reason="missing")
+            recorder.observe(minimap, found, snapshot(TrackerState.TRACKING, x=1, y=2), 0.0)
+            recorder.observe(minimap, missing, snapshot(TrackerState.LOST), 1.0)
+            recorder.observe(minimap, missing, snapshot(TrackerState.ACQUIRING), 1.2)
+            incident = recorder.observe(
+                minimap, found, snapshot(TrackerState.TRACKING, x=2, y=3), 1.5
+            )
+            assert incident is not None
+            metadata = json.loads((incident / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["outcome"], "transient_recovered")
+            self.assertEqual(metadata["recovery_seconds"], 0.5)
+            self.assertEqual(metadata["recovery_method"], "edge_correlation")
 
     def test_manual_report_is_anonymized_and_contains_ranked_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -143,6 +171,7 @@ class FailureRecorderTests(unittest.TestCase):
             serialized = (incident / "metadata.json").read_text(encoding="utf-8")
             metadata = json.loads(serialized)
             self.assertEqual(metadata["trigger"], "manual_report")
+            self.assertEqual(metadata["outcome"], "manual_report")
             self.assertEqual(metadata["environment"]["schema_version"], 3)
             self.assertEqual(
                 metadata["frames"][0]["localization"]["candidates"][0]["reference_id"],
