@@ -11,18 +11,10 @@ from pathlib import Path
 from .config import AppConfig
 from .pyramid import Locator, PyramidMatcher
 from .scenario import evaluate_scenario
+from .scenario_kpis import DEFAULT_KPIS, evaluate_kpis
 
 
 SUITE_FORMAT_VERSION = 1
-DEFAULT_KPIS: dict[str, float] = {
-    "max_false_locks": 0,
-    "max_wrong_layer_positions": 0,
-    "max_reacquire_seconds": 3.0,
-    "max_one_frame_layer_runs": 0,
-    "max_stationary_jitter_p95_px": 5.0,
-}
-
-
 def load_suite_manifest(path: str | Path) -> tuple[Path, dict[str, object]]:
     manifest_path = Path(path).resolve()
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -40,32 +32,6 @@ def load_suite_manifest(path: str | Path) -> tuple[Path, dict[str, object]]:
 def _scenario_path(root: Path, value: str) -> Path:
     candidate = Path(value)
     return candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
-
-
-def _evaluate_kpis(metrics: dict[str, object], kpis: dict[str, float]) -> list[str]:
-    failures: list[str] = []
-    if int(metrics.get("false_locks") or 0) > kpis["max_false_locks"]:
-        failures.append("false_locks")
-    layer_samples = int(metrics.get("layer_samples") or 0)
-    layer_accuracy = metrics.get("layer_accuracy")
-    wrong_layers = (
-        round(layer_samples * (1.0 - float(layer_accuracy)))
-        if layer_samples and layer_accuracy is not None else 0
-    )
-    if wrong_layers > kpis["max_wrong_layer_positions"]:
-        failures.append("wrong_layer_positions")
-    delays = metrics.get("acquisition_delays_seconds") or []
-    if any(
-        value is None or float(value) > kpis["max_reacquire_seconds"]
-        for value in delays
-    ):
-        failures.append("reacquire_seconds")
-    if int(metrics.get("one_frame_layer_runs") or 0) > kpis["max_one_frame_layer_runs"]:
-        failures.append("one_frame_layer_runs")
-    jitter = metrics.get("stationary_jitter_p95_px")
-    if jitter is not None and float(jitter) > kpis["max_stationary_jitter_p95_px"]:
-        failures.append("stationary_jitter_p95_px")
-    return failures
 
 
 def _system_display() -> tuple[tuple[int, int] | None, int | None]:
@@ -139,6 +105,10 @@ def run_benchmark_suite(
     if not isinstance(configured, dict):
         raise ValueError("Benchmark suite kpis must be an object")
     for key, value in configured.items():
+        if key == "max_reacquire_seconds":
+            # Backward-compatible alias used by the original suite manifests.
+            kpis["max_reacquire_p95_seconds"] = float(value)
+            continue
         if key not in kpis:
             raise ValueError(f"Unknown benchmark KPI: {key}")
         kpis[key] = float(value)
@@ -152,7 +122,7 @@ def run_benchmark_suite(
         report = evaluate_scenario(scenario_path, config, matcher)
         metrics = report["metrics"]
         assert isinstance(metrics, dict)
-        failures = _evaluate_kpis(metrics, kpis)
+        failures = evaluate_kpis(metrics, kpis)
         gating = bool(item.get("gating", True))
         passed = not failures
         if gating and not passed:

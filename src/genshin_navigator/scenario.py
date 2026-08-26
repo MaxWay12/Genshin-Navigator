@@ -16,6 +16,7 @@ from .config import AppConfig
 from .pyramid import Locator, PyramidMatcher
 from .position import PositionState
 from .screen_gate import MinimapScreenGate, ScreenGateResult
+from .scenario_kpis import DEFAULT_KPIS, evaluate_kpis
 from .tracker import LiveTracker
 
 
@@ -73,6 +74,32 @@ def load_scenario(path: str | Path) -> tuple[Path, dict[str, object]]:
         tracking = str(phase.get("tracking", "optional"))
         if tracking not in {"required", "optional"}:
             raise ValueError("Scenario expectation tracking must be required or optional")
+    checkpoints = manifest.get("checkpoints", [])
+    if not isinstance(checkpoints, list):
+        raise ValueError("Scenario checkpoints must be a list")
+    first_timestamp = float(frames[0]["timestamp_seconds"])
+    last_timestamp = float(frames[-1]["timestamp_seconds"])
+    checkpoint_timestamps: set[float] = set()
+    for checkpoint in checkpoints:
+        if not isinstance(checkpoint, dict):
+            raise ValueError("Scenario checkpoints must be objects")
+        timestamp = float(checkpoint["timestamp_seconds"])
+        if not first_timestamp <= timestamp <= last_timestamp:
+            raise ValueError("Scenario checkpoint timestamp lies outside the recording")
+        if timestamp in checkpoint_timestamps:
+            raise ValueError("Scenario checkpoint timestamps must be unique")
+        checkpoint_timestamps.add(timestamp)
+        if not str(checkpoint.get("region_id") or "").strip():
+            raise ValueError("Scenario checkpoint region_id must not be empty")
+        if not str(checkpoint.get("layer_id") or "").strip():
+            raise ValueError("Scenario checkpoint layer_id must not be empty")
+        position = checkpoint.get("position")
+        if not isinstance(position, dict):
+            raise ValueError("Scenario checkpoint position must be an object")
+        float(position["x"])
+        float(position["y"])
+        if float(position.get("tolerance_px", 20.0)) <= 0:
+            raise ValueError("Scenario checkpoint tolerance must be positive")
     return root, manifest
 
 
@@ -213,6 +240,7 @@ def record_scenario(
             expected_end_layer=expected_end_layer,
             stationary_last_seconds=stationary_last_seconds,
         ),
+        "checkpoints": [],
         "frames": frames,
     }
     manifest_path.write_text(
@@ -249,6 +277,39 @@ def _confirmed_layer_runs(rows: list[dict[str, object]]) -> list[tuple[str, int]
     return runs
 
 
+def _is_confirmed(tracker: dict[str, object]) -> bool:
+    return bool(
+        tracker.get("state") == PositionState.TRACKING.value
+        and not tracker.get("stale")
+        and isinstance(tracker.get("position"), dict)
+    )
+
+
+def _nearest_row_index(rows: list[dict[str, object]], timestamp: float) -> int:
+    return min(
+        range(len(rows)),
+        key=lambda index: abs(float(rows[index]["timestamp_seconds"]) - timestamp),
+    )
+
+
+def _longest_streak(
+    rows: list[dict[str, object]], predicate: Callable[[dict[str, object]], bool]
+) -> float:
+    longest = 0.0
+    current = 0.0
+    for row, following in zip(rows, rows[1:]):
+        duration = max(
+            0.0,
+            float(following["timestamp_seconds"]) - float(row["timestamp_seconds"]),
+        )
+        if predicate(row):
+            current += duration
+            longest = max(longest, current)
+        else:
+            current = 0.0
+    return longest
+
+
 def evaluate_scenario(
     path: str | Path,
     config: AppConfig,
@@ -258,6 +319,7 @@ def evaluate_scenario(
 ) -> dict[str, object]:
     root, manifest = load_scenario(path)
     expectations = [dict(item) for item in manifest.get("expectations", [])]
+    checkpoints = [dict(item) for item in manifest.get("checkpoints", [])]
     gate = screen_gate
     if gate is None and config.screen_gate.enabled:
         gate = MinimapScreenGate.from_config(config.screen_gate)
@@ -309,22 +371,18 @@ def evaluate_scenario(
             }
         )
 
-    false_locks = 0
+    false_lock_rows: set[int] = set()
     layer_samples = 0
     correct_layers = 0
     required_frames = 0
     correct_required_frames = 0
     position_errors: list[float] = []
-    for row in rows:
+    for row_index, row in enumerate(rows):
         phase = _phase_at(expectations, float(row["timestamp_seconds"]))
         tracker_raw = row["tracker"]
         assert isinstance(tracker_raw, dict)
         position = tracker_raw.get("position")
-        confirmed = bool(
-            tracker_raw.get("state") == PositionState.TRACKING.value
-            and not tracker_raw.get("stale")
-            and isinstance(position, dict)
-        )
+        confirmed = _is_confirmed(tracker_raw)
         gate_raw = row["gate"]
         assert isinstance(gate_raw, dict)
         if (
@@ -342,7 +400,7 @@ def evaluate_scenario(
             if str(position["layer_id"]) == str(phase["layer_id"]):
                 correct_layers += 1
         if not _position_matches_dict(tracker_raw, phase):
-            false_locks += 1
+            false_lock_rows.add(row_index)
         expected_position = phase.get("position")
         if isinstance(expected_position, dict):
             position_errors.append(
@@ -351,6 +409,28 @@ def evaluate_scenario(
                     float(position["y"]) - float(expected_position["y"]),
                 )
             )
+
+    checkpoint_errors: list[float] = []
+    checkpoint_tracking_samples = 0
+    for checkpoint in checkpoints:
+        row_index = _nearest_row_index(rows, float(checkpoint["timestamp_seconds"]))
+        row = rows[row_index]
+        tracker_raw = row["tracker"]
+        assert isinstance(tracker_raw, dict)
+        if not _is_confirmed(tracker_raw):
+            continue
+        checkpoint_tracking_samples += 1
+        if not _position_matches_dict(tracker_raw, checkpoint):
+            false_lock_rows.add(row_index)
+        position = tracker_raw["position"]
+        expected = checkpoint["position"]
+        assert isinstance(position, dict) and isinstance(expected, dict)
+        checkpoint_errors.append(
+            math.hypot(
+                float(position["x"]) - float(expected["x"]),
+                float(position["y"]) - float(expected["y"]),
+            )
+        )
 
     acquisition_delays: list[float | None] = []
     for visible_at in visible_transitions:
@@ -428,51 +508,82 @@ def evaluate_scenario(
     )
     successful_delays = [value for value in acquisition_delays if value is not None]
     max_delay = max(successful_delays) if successful_delays else None
+    reacquisition_p95 = _percentile(successful_delays, 0.95)
     jitter_p95 = _percentile(stationary_jitter, 0.95)
     annotated = bool(expectations)
     tracking_coverage = (
         correct_required_frames / required_frames if required_frames else None
     )
-    passed = None
-    if annotated:
-        passed = bool(
-            false_locks == 0
-            and one_frame_layer_runs == 0
-            and all(value is not None and value <= 3.0 for value in acquisition_delays)
-            and (jitter_p95 is None or jitter_p95 <= 5.0)
-            and (tracking_coverage is None or tracking_coverage >= 0.8)
+    def required_visible(row: dict[str, object]) -> bool:
+        phase = _phase_at(expectations, float(row["timestamp_seconds"]))
+        gate_raw = row["gate"]
+        assert isinstance(gate_raw, dict)
+        return bool(
+            phase is not None
+            and phase.get("tracking") == "required"
+            and gate_raw.get("minimap_present")
         )
+
+    def untracked_required(row: dict[str, object]) -> bool:
+        if not required_visible(row):
+            return False
+        tracker_raw = row["tracker"]
+        assert isinstance(tracker_raw, dict)
+        phase = _phase_at(expectations, float(row["timestamp_seconds"]))
+        assert phase is not None
+        return not (_is_confirmed(tracker_raw) and _position_matches_dict(tracker_raw, phase))
+
+    def lost_required(row: dict[str, object]) -> bool:
+        if not required_visible(row):
+            return False
+        tracker_raw = row["tracker"]
+        assert isinstance(tracker_raw, dict)
+        return tracker_raw.get("state") == PositionState.LOST.value
+
+    longest_untracked = _longest_streak(rows, untracked_required)
+    longest_lost = _longest_streak(rows, lost_required)
+    all_position_errors = position_errors + checkpoint_errors
+    metrics: dict[str, object] = {
+        "total_frames": len(rows),
+        "visible_frames": sum(bool(row["gate"]["minimap_present"]) for row in rows),
+        "tracking_frames": sum(
+            row["tracker"]["state"] == PositionState.TRACKING.value
+            and not row["tracker"].get("stale")
+            and row["tracker"].get("position") is not None
+            for row in rows
+        ),
+        "required_tracking_coverage": (
+            round(tracking_coverage, 4) if tracking_coverage is not None else None
+        ),
+        "false_locks": len(false_lock_rows),
+        "layer_accuracy": round(correct_layers / layer_samples, 4) if layer_samples else None,
+        "layer_samples": layer_samples,
+        "position_checkpoint_count": len(checkpoints),
+        "position_checkpoint_tracking_samples": checkpoint_tracking_samples,
+        "one_frame_layer_runs": one_frame_layer_runs,
+        "acquisition_delays_seconds": acquisition_delays,
+        "max_acquisition_delay_seconds": max_delay,
+        "reacquisition_p95_seconds": (
+            round(reacquisition_p95, 4) if reacquisition_p95 is not None else None
+        ),
+        "unreacquired_transition_count": sum(value is None for value in acquisition_delays),
+        "lost_duration_seconds": round(lost_duration, 4),
+        "longest_lost_streak_seconds": round(longest_lost, 4),
+        "longest_untracked_streak_seconds": round(longest_untracked, 4),
+        "stationary_jitter_p95_px": round(jitter_p95, 3) if jitter_p95 is not None else None,
+        "median_position_error_px": round(statistics.median(all_position_errors), 3) if all_position_errors else None,
+        "p95_position_error_px": round(_percentile(all_position_errors, 0.95), 3) if all_position_errors else None,
+        "mean_processing_ms": round(statistics.mean(processing_ms), 2),
+        "p95_processing_ms": round(_percentile(processing_ms, 0.95), 2),
+    }
+    passed = None if not annotated else not evaluate_kpis(metrics, DEFAULT_KPIS)
     return {
         "format_version": SCENARIO_FORMAT_VERSION,
         "scenario": str(root),
         "name": manifest.get("name", root.name),
         "annotated": annotated,
         "passed": passed,
-        "metrics": {
-            "total_frames": len(rows),
-            "visible_frames": sum(bool(row["gate"]["minimap_present"]) for row in rows),
-            "tracking_frames": sum(
-                row["tracker"]["state"] == PositionState.TRACKING.value
-                and not row["tracker"].get("stale")
-                and row["tracker"].get("position") is not None
-                for row in rows
-            ),
-            "required_tracking_coverage": (
-                round(tracking_coverage, 4) if tracking_coverage is not None else None
-            ),
-            "false_locks": false_locks,
-            "layer_accuracy": round(correct_layers / layer_samples, 4) if layer_samples else None,
-            "layer_samples": layer_samples,
-            "one_frame_layer_runs": one_frame_layer_runs,
-            "acquisition_delays_seconds": acquisition_delays,
-            "max_acquisition_delay_seconds": max_delay,
-            "lost_duration_seconds": round(lost_duration, 4),
-            "stationary_jitter_p95_px": round(jitter_p95, 3) if jitter_p95 is not None else None,
-            "median_position_error_px": round(statistics.median(position_errors), 3) if position_errors else None,
-            "p95_position_error_px": round(_percentile(position_errors, 0.95), 3) if position_errors else None,
-            "mean_processing_ms": round(statistics.mean(processing_ms), 2),
-            "p95_processing_ms": round(_percentile(processing_ms, 0.95), 2),
-        },
+        "metrics": metrics,
         "frames": rows,
     }
 

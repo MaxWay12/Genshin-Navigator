@@ -175,6 +175,20 @@ class ScenarioTests(unittest.TestCase):
                                 "stationary_from_seconds": 0.5,
                             },
                         ],
+                        "checkpoints": [
+                            {
+                                "timestamp_seconds": 0.1,
+                                "region_id": "fontaine",
+                                "layer_id": "surface",
+                                "position": {"x": 100.0, "y": 100.0, "tolerance_px": 10.0},
+                            },
+                            {
+                                "timestamp_seconds": 0.5,
+                                "region_id": "fontaine",
+                                "layer_id": "underground:floor_b",
+                                "position": {"x": 505.0, "y": 100.0, "tolerance_px": 10.0},
+                            },
+                        ],
                         "frames": frames,
                     }
                 ),
@@ -193,6 +207,8 @@ class ScenarioTests(unittest.TestCase):
             self.assertEqual(metrics["false_locks"], 0)
             self.assertEqual(metrics["one_frame_layer_runs"], 0)
             self.assertEqual(metrics["layer_accuracy"], 1.0)
+            self.assertEqual(metrics["position_checkpoint_count"], 2)
+            self.assertEqual(metrics["position_checkpoint_tracking_samples"], 2)
             self.assertEqual(metrics["acquisition_delays_seconds"], [0.1, 0.2])
             rows = report["frames"]
             self.assertEqual(rows[2]["tracker"]["state"], "TRACKING")

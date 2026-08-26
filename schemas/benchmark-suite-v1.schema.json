@@ -6,7 +6,21 @@
   "properties": {
     "format_version": {"const": 1},
     "name": {"type": "string"},
-    "kpis": {"type": "object"},
+    "kpis": {
+      "type": "object",
+      "properties": {
+        "max_false_locks": {"type": "number", "minimum": 0},
+        "max_wrong_layer_positions": {"type": "number", "minimum": 0},
+        "min_tracking_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "max_untracked_streak_seconds": {"type": "number", "minimum": 0},
+        "max_reacquire_p95_seconds": {"type": "number", "minimum": 0},
+        "max_reacquire_seconds": {"type": "number", "minimum": 0},
+        "max_one_frame_layer_runs": {"type": "number", "minimum": 0},
+        "max_stationary_jitter_p95_px": {"type": "number", "minimum": 0},
+        "min_position_checkpoints": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
     "scenarios": {
       "type": "array",
       "minItems": 1,
