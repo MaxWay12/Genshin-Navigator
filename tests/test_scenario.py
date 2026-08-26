@@ -140,6 +140,29 @@ class ScenarioTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "strictly increasing"):
                 load_scenario(root)
 
+    def test_required_throughout_covers_the_complete_visible_recording(self) -> None:
+        clock = FakeClock()
+        desktop = np.zeros((12, 12, 3), dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest_path = record_scenario(
+                app_config(),
+                Path(temporary) / "complete",
+                0.2,
+                expected_start_layer="surface",
+                expected_end_layer="surface",
+                stationary_last_seconds=0.1,
+                required_throughout=True,
+                capture_screen=lambda: desktop.copy(),
+                clock=clock,
+                sleeper=clock.sleep,
+            )
+            _, manifest = load_scenario(manifest_path.parent)
+            self.assertEqual(len(manifest["expectations"]), 1)
+            phase = manifest["expectations"][0]
+            self.assertEqual(phase["start_seconds"], 0.0)
+            self.assertEqual(phase["end_seconds"], 0.2)
+            self.assertEqual(phase["stationary_from_seconds"], 0.1)
+
     def test_replay_pauses_reacquires_and_confirms_layer_transition(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

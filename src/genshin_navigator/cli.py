@@ -84,6 +84,11 @@ def _parser() -> argparse.ArgumentParser:
     record_sequence.add_argument("--expected-start-layer")
     record_sequence.add_argument("--expected-end-layer")
     record_sequence.add_argument("--stationary-last-seconds", type=float, default=0.0)
+    record_sequence.add_argument(
+        "--required-throughout",
+        action="store_true",
+        help="Require a usable position whenever the minimap is visible",
+    )
     record_sequence.add_argument("--ui-scale", default="unknown")
     record_sequence.add_argument("--graphics-preset", default="unknown")
 
@@ -658,6 +663,7 @@ def main(argv: list[str] | None = None) -> int:
                 expected_start_layer=args.expected_start_layer,
                 expected_end_layer=args.expected_end_layer,
                 stationary_last_seconds=args.stationary_last_seconds,
+                required_throughout=args.required_throughout,
                 genshin_ui_scale=args.ui_scale,
                 graphics_preset=args.graphics_preset,
                 phase_notifier=_recording_phase_signal,

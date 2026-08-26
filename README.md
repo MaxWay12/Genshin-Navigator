@@ -522,19 +522,19 @@ P95 jitter ≤ 5 atlas-px. Coverage и untracked streak считаются то�
 ```powershell
 .venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_walk `
   --config config.sumeru-portability.example.json --duration 20 --name "desert walk and stop" `
-  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5
+  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5 --required-throughout
 
 .venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_teleport `
   --config config.sumeru-portability.example.json --duration 30 --name "desert teleport" `
-  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5
+  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5 --required-throughout
 
 .venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_landmark `
   --config config.sumeru-portability.example.json --duration 20 --name "desert second landmark" `
-  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5
+  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5 --required-throughout
 
 .venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_ruins `
   --config config.sumeru-portability.example.json --duration 20 --name "desert sparse ruins" `
-  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5
+  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5 --required-throughout
 ```
 
 После записи контрольные позиции ставятся кликом по каноническому атласу:

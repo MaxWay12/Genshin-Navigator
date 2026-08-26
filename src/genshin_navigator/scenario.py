@@ -110,8 +110,27 @@ def _build_expectations(
     expected_start_layer: str | None,
     expected_end_layer: str | None,
     stationary_last_seconds: float,
+    required_throughout: bool = False,
 ) -> list[dict[str, object]]:
     expectations: list[dict[str, object]] = []
+    if required_throughout:
+        if not expected_start_layer or expected_start_layer != expected_end_layer:
+            raise ValueError(
+                "required_throughout requires identical start and end layers"
+            )
+        phase: dict[str, object] = {
+            "name": "required throughout",
+            "start_seconds": 0.0,
+            "end_seconds": round(duration_seconds, 3),
+            "tracking": "required",
+            "region_id": expected_region_id,
+            "layer_id": expected_start_layer,
+        }
+        if stationary_last_seconds > 0:
+            phase["stationary_from_seconds"] = round(
+                duration_seconds - stationary_last_seconds, 3
+            )
+        return [phase]
     edge_window = min(3.0, duration_seconds / 3.0)
     if expected_start_layer:
         expectations.append(
@@ -152,6 +171,7 @@ def record_scenario(
     expected_start_layer: str | None = None,
     expected_end_layer: str | None = None,
     stationary_last_seconds: float = 0.0,
+    required_throughout: bool = False,
     genshin_ui_scale: str = "unknown",
     graphics_preset: str = "unknown",
     capture_screen: Callable[[], np.ndarray] = grab_screen,
@@ -239,6 +259,7 @@ def record_scenario(
             expected_start_layer=expected_start_layer,
             expected_end_layer=expected_end_layer,
             stationary_last_seconds=stationary_last_seconds,
+            required_throughout=required_throughout,
         ),
         "checkpoints": [],
         "frames": frames,
