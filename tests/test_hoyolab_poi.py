@@ -80,6 +80,34 @@ class HoyolabPoiTests(unittest.TestCase):
         self.assertEqual(by_layer["surface"].local_to_world, ((0.5, 0.0), (0.0, 1 / 3)))
         self.assertEqual(by_layer["floor-a"].local_to_world, ((1.0, 0.0), (0.0, 1.0)))
 
+    def test_surface_only_region_needs_no_underground_metadata(self) -> None:
+        surface = {
+            "region_id": "sumeru_desert",
+            "atlas_size": [100, 100],
+            "world_to_atlas": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        }
+        labels = [{"id": 17, "name": "Chest"}]
+        points = [
+            {
+                "id": 7,
+                "label_id": 17,
+                "area_id": 4,
+                "x_pos": 20,
+                "y_pos": 30,
+            }
+        ]
+
+        pois, stats = build_catalog(
+            points, labels, surface, None, area_id=4
+        )
+        metrics = build_space_metrics(surface, None)
+
+        self.assertEqual(len(pois), 1)
+        self.assertEqual(pois[0].region_id, "sumeru_desert")
+        self.assertEqual(pois[0].layer_id, "surface")
+        self.assertEqual(stats["surface"], 1)
+        self.assertEqual(len(metrics), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

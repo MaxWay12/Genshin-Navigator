@@ -93,7 +93,7 @@ def build_catalog(
     points: Iterable[dict[str, Any]],
     labels: Iterable[dict[str, Any]],
     surface_metadata: dict[str, Any],
-    underground_metadata: dict[str, Any],
+    underground_metadata: dict[str, Any] | None,
     *,
     area_id: int = 8,
     label_kinds: dict[int, str] | None = None,
@@ -107,7 +107,7 @@ def build_catalog(
         )
     atlas_width, atlas_height = map(int, surface_metadata["atlas_size"])
     floors: dict[tuple[int, int], tuple[str, np.ndarray, tuple[int, int]]] = {}
-    for group in underground_metadata.get("groups", []):
+    for group in (underground_metadata or {}).get("groups", []):
         group_id = int(group["group_id"])
         for floor in group.get("floors", []):
             floors[(group_id, int(floor["floor_id"]))] = (
@@ -166,7 +166,7 @@ def build_catalog(
 
 def build_space_metrics(
     surface_metadata: dict[str, Any],
-    underground_metadata: dict[str, Any],
+    underground_metadata: dict[str, Any] | None,
 ) -> list[MapSpaceMetric]:
     region_id = str(surface_metadata.get("region_id", "fontaine"))
     atlas_to_world = np.linalg.inv(
@@ -183,7 +183,7 @@ def build_space_metrics(
             ),
         )
     ]
-    for group in underground_metadata.get("groups", []):
+    for group in (underground_metadata or {}).get("groups", []):
         for floor in group.get("floors", []):
             matrix = np.asarray(floor["local_to_world"], dtype=np.float64)
             metrics.append(

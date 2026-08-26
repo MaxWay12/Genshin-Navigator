@@ -1,587 +1,245 @@
 # Genshin Navigator
 
-MVP пассивно оценивает позицию игрока по изображению миникарты. Программа получает
-обычный снимок экрана через Windows, вырезает настроенную область и сопоставляет её
-с пользовательским эталонным изображением карты.
+**Genshin Navigator v0.1.0-alpha** — пассивный GPS-помощник для мира Genshin Impact.
 
-Проект **не** читает память Genshin, не внедряет код, не ставит хуки, не отправляет
-нажатия и не управляет игрой.
+Navigator смотрит только на изображение миникарты, определяет положение игрока и
+показывает ближайший сундук, направление, расстояние и официальную подсказку в
+отдельном HUD-окне. Это бесплатный open-source pet-проект, не связанный с HoYoverse.
 
-## Что выдаёт MVP
+## Что принципиально делает и не делает Navigator
 
-- позицию с регионом, слоем и явно указанной системой координат;
-- нормализованную позицию от `0` до `1`;
-- оценку поворота и масштаба миникарты;
-- уверенность, число совпадений и диагностическую причину при неудаче.
+Navigator получает обычное изображение экрана Windows, анализирует область миникарты,
+показывает собственное отдельное окно и хранит карты, POI и прогресс локально.
 
-## Быстрый старт (PowerShell)
+Navigator **не** управляет персонажем, не эмулирует игровой ввод, не читает и не
+изменяет память Genshin, не внедряется в процесс игры и не устанавливает
+низкоуровневые клавиатурные хуки. Глобальные клавиши реализованы стандартным Windows
+`RegisterHotKey` и управляют только Navigator.
+
+Проект описывает техническое поведение программы и не утверждает, что сторонние
+инструменты официально разрешены HoYoverse.
+
+## Возможности alpha
+
+- live-локализация по миникарте и stateful tracking;
+- безопасные состояния `TRACKING`, `ACQUIRING`, `RELOCATING` и `LOST`;
+- поверхность и подземные этажи Фонтейна;
+- экспериментальная поверхность пустыни Сумеру;
+- официальный каталог сундуков и телепортов;
+- sticky target, previous/next, skip, collected и undo;
+- компактный HUD, карточка подсказки и полная карта;
+- офлайн SQLite-прогресс и кэш просмотренных подсказок;
+- необязательная ручная additive-синхронизация отметок HoYoLAB;
+- обезличенные diagnostic bundles только из crops миникарты.
+
+## Поддерживаемые регионы
+
+| Регион | Статус | Объём поддержки |
+| --- | --- | --- |
+| Фонтейн | **Supported alpha** | Поверхность, 59 подземных этажей, POI, HUD, hints, progress |
+| Сумеру — пустыня | **Experimental** | Поверхность, POI, HUD, hints, local progress |
+
+Сумеру пока не включает подземные этажи. В визуально пустых руинах Navigator может
+временно перейти в `LOST`; это безопаснее уверенной неправильной позиции.
+
+## Системные требования
+
+- Windows 10/11 x64;
+- Genshin Impact в оконном или безрамочном режиме;
+- включённый Num Lock;
+- рекомендуемая готовая конфигурация: 1920×1080, масштаб Windows 100%;
+- Edge WebView2 — только для необязательного входа HoYoLAB;
+- интернет нужен для обновлений, подсказок и sync, но не для обычной навигации.
+
+## Установка portable build
+
+1. Скачайте `GenshinNavigator-v0.1.0-alpha-windows-x64.zip`.
+2. Сверьте SHA-256 с соседним файлом `.sha256`.
+3. Распакуйте архив в обычную доступную для записи папку.
+4. Для Фонтейна запустите `Start-Fontaine.cmd`.
+5. Для экспериментального Сумеру запустите `Start-Sumeru-Experimental.cmd`.
+
+Не запускайте EXE внутри ZIP: рядом с программой создаётся локальная папка
+`datasets/local` с прогрессом, кэшем и настройками HUD.
+
+### Первый запуск и ROI
+
+При первом запуске `.cmd` автоматически создаёт рабочий `config.json` для Фонтейна
+или `config.sumeru.json` для Сумеру. Готовые значения используют миникарту `216×216`
+с левым верхним углом `(57, 19)` для 1920×1080. Если разрешение или UI отличаются,
+измените секцию `roi` в созданном рабочем файле нужного региона:
+
+```json
+"roi": {"left": 57, "top": 19, "width": 216, "height": 216}
+```
+
+После чтения кадра diagnostics сохраняют только этот crop, а не полный экран.
+
+## Управление
+
+При включённом Num Lock:
+
+- `Num4` / `Num6` — предыдущая / следующая цель;
+- `Num2` — временно пропустить цель;
+- удерживать `Num5` одну секунду — отметить сундук собранным;
+- `Num8` — отменить последнее действие;
+- `Num0` — HUD / полная карта;
+- `Num7` — раскрыть или закрыть подсказку;
+- `Num1` / `Num3` — страницы текста подсказки;
+- `NumDecimal` — разблокировать HUD для перемещения / закрепить;
+- `NumAdd` — сохранить обезличенный diagnostic bundle;
+- `Num9` — закрыть Navigator.
+
+Закреплённый HUD не получает фокус и пропускает клики. Если клавиши работают на
+рабочем столе, но не в Genshin, запустите Navigator и игру с одинаковыми правами.
+
+## HUD
+
+Компактный режим показывает цель, прямолинейное расстояние, слой, состояние трекера и
+north-up стрелку. При `LOST`, stale-позиции или телепорте цель сохраняется, но стрелка
+и расстояние замораживаются и затемняются.
+
+`Num7` раскрывает официальное описание и изображение точки. Просмотренная карточка
+кэшируется и доступна офлайн. Ошибка HoYoLAB влияет только на карточку, не на GPS.
+
+## Прогресс и офлайн-режим
+
+Главное состояние хранится в `datasets/local/data/genshin_navigator.db`. Отметки
+переживают перезапуск, а перед изменением схемы создаётся backup. Обычный запуск не
+требует сети. Portable archive не содержит чужой базы, прогресса, cookies или reports.
+
+Экспорт и безопасное объединение прогресса в установке из исходников:
+
+```powershell
+.venv\Scripts\genshin-navigator progress-export progress.json --config config.example.json --region fontaine
+.venv\Scripts\genshin-navigator progress-import progress.json --config config.example.json --region fontaine
+```
+
+## Интеграция HoYoLAB
+
+Интеграция необязательна. Вход открывается в отдельном профиле Edge WebView2 и не
+читает cookies установленного браузера:
+
+```powershell
+GenshinNavigator.exe hoyolab-login --config config.json
+GenshinNavigator.exe progress-sync --config config.json --region fontaine
+GenshinNavigator.exe hoyolab-logout --config config.json
+```
+
+Sync показывает preview и требует подтверждение. Он только добавляет отметки и не
+снимает их автоматически. Это отметки интерактивной карты, а не реальное состояние
+сундуков игрового мира. HoYoLAB API недокументирован и может измениться; локальный GPS
+и прогресс продолжат работать офлайн.
+
+## Diagnostics и privacy
+
+`NumAdd` или команда ниже сохраняют последовательность crops миникарты:
+
+```powershell
+GenshinNavigator.exe diagnostic-record --config config.json --duration 5
+```
+
+Bundle не должен содержать полный экран, UID, cookies, auth headers, полный config или
+абсолютный пользовательский путь. Перед отправкой его всё равно можно проверить.
+
+В `datasets/local` вне Git хранятся SQLite, progress, профиль HoYoLAB, кэш изображений,
+положение HUD, screenshots, сценарии и diagnostics.
+
+## Известные ограничения
+
+- Это alpha, а не завершённый продукт.
+- Сумеру экспериментален и ограничен поверхностью пустыни.
+- В sparse/low-observability зонах возможны краткие `LOST`.
+- Для Сумеру расстояние может показываться как uncalibrated.
+- Стрелка не учитывает стены, высоту, входы в пещеры и пеший маршрут.
+- Скрытые или сюжетно заблокированные сундуки требуют ручного skip.
+- Изменения UI или официальных карт могут потребовать обновления assets.
+- Глобальные клавиши могут конфликтовать с другими программами.
+
+## Troubleshooting
+
+### Tracker постоянно LOST
+
+- Проверьте разрешение, масштаб Windows и `roi`.
+- Убедитесь, что миникарта полностью попадает в crop.
+- Закройте большую карту и дождитесь обычной миникарты.
+- Запустите правильный регион через соответствующий `.cmd`.
+
+### Нет целей
+
+- Проверьте каталог региона в `datasets/local/poi`.
+- Запустите `data-status` с конфигурацией региона.
+- Цели другого региона намеренно не выбираются.
+
+### Не работают NumPad-клавиши
+
+- Включите Num Lock.
+- Проверьте одинаковый уровень прав Genshin и Navigator.
+- Закройте программу, занявшую ту же глобальную клавишу.
+
+### HoYoLAB недоступен
+
+Продолжайте пользоваться GPS офлайн. Для login установите актуальный Microsoft Edge
+WebView2 Runtime. Сетевая ошибка не должна повреждать локальный прогресс.
+
+## Разработка из исходников
+
+Проверенная среда: Python 3.12, NumPy 2.5.2, OpenCV 4.14.0, Pillow 11.3.0,
+pywebview 6.2.1.
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements-lock.txt
 .venv\Scripts\python -m pip install -e .
-Copy-Item config.example.json config.json
+.venv\Scripts\python -m unittest discover -s tests
+.venv\Scripts\python scripts\release_smoke.py
 ```
 
-Проверенная среда: Python 3.12, NumPy 2.5.2, OpenCV 4.14.0, Pillow 11.3.0
-и pywebview 6.2.1 на Windows.
-`pyproject.toml` оставляет совместимые диапазоны для обычной установки, а
-`requirements-lock.txt` воспроизводит среду, на которой выполнен baseline.
-
-### Фонтейн с нуля
-
-После установки следующий путь последовательно получает официальный атлас и
-подземные этажи, строит итоговую пирамиду, загружает POI, запускает тесты и трекер:
+Запуск через региональный manifest:
 
 ```powershell
-.venv\Scripts\python scripts\fetch_hoyolab_atlas.py `
-  datasets\local\references\hoyolab_fontaine_full_n1 `
-  --zoom N1 --x 32:43 --y 12:23
-
-.venv\Scripts\python scripts\fetch_hoyolab_underground.py `
-  datasets\local\references\hoyolab_fontaine_underground --preset fontaine
-
-.venv\Scripts\python scripts\build_underground_pyramid.py `
-  datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
-  datasets\local\references\hoyolab_fontaine_full_n1\surface_pyramid.json `
-  datasets\local\references\hoyolab_fontaine_underground\metadata.json `
-  datasets\local\references\hoyolab_fontaine_full_n1\pyramid.json
-
-.venv\Scripts\python scripts\fetch_hoyolab_poi.py `
-  datasets\local\poi\fontaine.json `
-  --surface-metadata datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
-  --underground-metadata datasets\local\references\hoyolab_fontaine_underground\metadata.json
-
-.venv\Scripts\genshin-navigator sync-data --config config.json
-.venv\Scripts\genshin-navigator data-status --config config.json
-
-.venv\Scripts\python -m unittest discover -s tests -v
-.venv\Scripts\genshin-navigator track --config config.json
+.venv\Scripts\genshin-navigator track --regions regions.json --region fontaine
+.venv\Scripts\genshin-navigator track --regions regions.json --region sumeru_desert
 ```
 
-Карты и POI остаются в `datasets/local` и не входят в Git. Перед первым запуском
-проверьте ROI под своё разрешение экрана; остальные актуальные параметры уже есть
-в `config.example.json`.
-
-### Локальные данные и обновление POI
-
-По умолчанию используется `storage_backend: auto`. При первом запуске существующие
-`fontaine.json` и `poi_progress.json` импортируются в
-`datasets/local/data/genshin_navigator.db`, после чего трекер читает каталог и
-прогресс только из SQLite. Интернет для запуска и навигации не требуется.
-
-Обновление из публичной интерактивной карты выполняется отдельно:
+Обновление публичных POI выполняется отдельно и транзакционно:
 
 ```powershell
-.venv\Scripts\genshin-navigator sync-data --config config.json
-.venv\Scripts\genshin-navigator data-status --config config.json
+.venv\Scripts\genshin-navigator sync-data --config config.example.json
+.venv\Scripts\genshin-navigator sync-data --config config.sumeru.example.json
 ```
 
-`sync-data` сначала загружает и проверяет весь новый каталог, а затем заменяет
-рабочий снимок одной транзакцией. При ошибке сети, неизвестном слое или повреждённом
-ответе прежние данные остаются рабочими. Версия контента вычисляется по фактическому
-ответу HoYoLAB; для воспроизводимого снимка можно явно передать `--map-version`.
-
-Тяжёлые карты и изображения в SQLite не записываются. База хранит только POI,
-метрики, прогресс, версии и пути к локальным assets. Временный аварийный режим можно
-включить через `data.storage_backend: json`; после появления рабочей SQLite-базы
-автоматического молчаливого отката к JSON нет.
-
-### Синхронизация прогресса HoYoLAB
-
-Локальная SQLite-база остаётся главным состоянием Navigator. Подключение HoYoLAB
-нужно только для ручного обмена отметками интерактивной карты и не влияет на
-локализацию или офлайн-запуск GPS.
-
-Первый вход выполняется в отдельном профиле Edge WebView2:
+Сборка portable artifact:
 
 ```powershell
-.venv\Scripts\genshin-navigator hoyolab-login --config config.json
+.venv\Scripts\python -m pip install -r requirements-build.txt
+powershell -ExecutionPolicy Bypass -File release\build_portable.ps1
 ```
 
-Войдите на открывшейся официальной карте. Когда заголовок сообщит об успешном
-подключении, закройте окно. Cookies остаются только в
-`datasets/local/auth/hoyolab_webview`, не записываются в SQLite и исключены из Git.
+Скрипт включает только выбранные официальные assets и каталоги, запускает privacy-аудит
+и создаёт SHA-256.
 
-Проверка состояния и двусторонняя additive-синхронизация:
+## Архитектура
 
-```powershell
-.venv\Scripts\genshin-navigator progress-status --config config.json
-.venv\Scripts\genshin-navigator progress-sync --config config.json
+```text
+screen capture → minimap gate → localization → tracker → Position Model
+                                                        ↓
+Region Manifest → Providers → SQLite → Repositories → Navigation → HUD
 ```
 
-`progress-sync` сначала показывает preview с количеством загружаемых и отправляемых
-точек, а затем просит подтверждение. Синхронизация только добавляет collected-отметки
-и никогда не снимает их в HoYoLAB. Для заранее проверенного неинтерактивного запуска
-доступен флаг `--yes`.
+CV не знает о HoYoLAB, SQLite или прогрессе. Navigation не обращается к сети. Runtime
+использует только локальный data provider.
 
-Если отменить локальную отметку, которая уже присутствует в HoYoLAB, Navigator
-сохранит локальное исключение и не будет возвращать её при следующем pull. Удалённая
-отметка при этом не изменяется. Полностью удалить изолированную сессию можно командой:
+## Support the project
 
-```powershell
-.venv\Scripts\genshin-navigator hoyolab-logout --config config.json
+Navigator бесплатен и не имеет paywall. Добровольная ссылка может быть добавлена позже:
+
+```text
+DONATION_LINK_PLACEHOLDER
 ```
 
-### Резервная копия и перенос прогресса
+Реальный игровой UID разработчика намеренно не включён.
 
-Перед изменением схемы SQLite Navigator создаёт консистентную резервную копию в
-`datasets/local/backups` и хранит пять последних копий. Переносимый JSON содержит
-только collected-отметки и локальные исключения HoYoLAB — без cookies, подсказок и
-изображений:
+## Лицензия
 
-```powershell
-.venv\Scripts\genshin-navigator progress-export artifacts/fontaine-progress.json --config config.json
-.venv\Scripts\genshin-navigator progress-import artifacts/fontaine-progress.json --config config.json
-```
-
-Обычный import сначала показывает preview и безопасно объединяет данные. Флаг
-`--replace` заменяет только прогресс выбранного региона и перед применением создаёт
-дополнительную резервную копию. Неизвестные POI перечисляются в preview и не
-добавляются в базу.
-
-### Обезличенный diagnostic bundle
-
-Во время работы GPS `NumAdd` сохраняет несколько crops миникарты до и после
-проблемного момента. Полный экран, UID, cookies, заголовки авторизации, абсолютные
-пути и `config.json` в отчёт не входят. Запасной пятисекундный запуск и replay:
-
-```powershell
-.venv\Scripts\genshin-navigator diagnostic-record --config config.json --duration 5
-.venv\Scripts\genshin-navigator replay-diagnostic artifacts/failures/failure_... --config config.json --report artifacts/diagnostic-replay.json
-```
-
-Новый формат v4 включает состояния tracker и до пяти лучших кандидатов каждого
-кадра. Replay сохраняет совместимость со старыми bundle v3.
-
-### Golden benchmark
-
-Suite объединяет stateful-сценарии и возвращает код `2`, если gating-сценарий
-нарушил hard KPI. Известные проблемные записи можно оставить `gating: false`, не
-скрывая их результат:
-
-```powershell
-.venv\Scripts\genshin-navigator benchmark-suite benchmarks/fontaine-golden.example.json --config config.json --report datasets/local/benchmarks/fontaine-golden.json
-```
-
-По умолчанию проверяются: ноль false lock, ноль уверенных неправильных слоёв,
-reacquire не более 3 секунд, отсутствие однокадровой смены слоя и stationary jitter
-P95 не более 5 px. Реальные crops и отчёты остаются в `datasets/local`.
-
-1. Поместите цельное изображение карты в `assets/world_map.png`. Оно должно быть
-   того же визуального стиля и масштаба, что и содержимое миникарты.
-2. Сохраните тестовый снимок рабочего стола:
-
-```powershell
-.venv\Scripts\genshin-navigator capture --output artifacts/screen.png
-```
-
-3. В `config.json` укажите прямоугольник `roi` вокруг круглой миникарты.
-4. Проверьте поиск без запуска непрерывного режима:
-
-```powershell
-.venv\Scripts\genshin-navigator locate --config config.json --screenshot artifacts/screen.png
-```
-
-5. Для пассивного обновления позиции по текущему экрану:
-
-```powershell
-.venv\Scripts\genshin-navigator watch --config config.json
-```
-
-Для live-трекера с отдельным компактным HUD:
-
-```powershell
-.venv\Scripts\genshin-navigator track --config config.json
-```
-
-Если включены блоки `poi` и `navigation`, HUD показывает закреплённую цель,
-приблизительное расстояние, читаемое название слоя и north-up стрелку. `Num0`
-глобально переключает HUD и полную карту, не меняя выбранную цель. Первоначально
-выбирается ближайший несобранный сундук, но при движении цель сама не переключается.
-
-Глобальное управление при включённом `Num Lock` не требует активировать Navigator:
-
-- `Num4` / `Num6` — предыдущая / следующая цель;
-- `Num2` — пропустить до закрытия приложения;
-- удерживать `Num5` одну секунду — отметить собранной;
-- `Num8` — отменить последнее `skip` или `collected`;
-- `Num0` — компактный HUD / полная карта;
-- `Num7` — раскрыть / закрыть официальную подсказку текущей цели;
-- `Num1` / `Num3` — предыдущая / следующая страница подсказки;
-- `NumDecimal` — разблокировать HUD для перетаскивания / закрепить и сохранить.
-- `Num9` — закрыть Navigator из игры.
-
-Закреплённый HUD остаётся поверх окон, не получает фокус и пропускает клики. Его
-положение хранится локально в `datasets/local/ui/hud_state.json`. Navigator
-регистрирует системные горячие клавиши Windows, но не отправляет ввод в игру и не
-устанавливает низкоуровневых клавиатурных хуков. Конфликт занятой клавиши
-показывается в HUD, не отключая остальные команды.
-
-Подсказка загружается из публичной интерактивной карты HoYoLAB только при первом
-раскрытии цели. Текст, изображение и ссылки сохраняются в ограниченном локальном
-кэше `datasets/local/cache/poi`, поэтому уже просмотренная карточка доступна без
-интернета. Сеть обслуживается отдельным потоком и не останавливает CV-трекинг.
-Обычные пользовательские комментарии не используются. Авторизация нужна только
-отдельной ручной команде синхронизации прогресса; загрузка подсказок остаётся публичной.
-
-Если Genshin запущен от имени администратора, Navigator необходимо запустить с
-тем же уровнем прав, иначе Windows не позволит ему увидеть глобальные клавиши над
-активной игрой. HUD показывает предупреждение при обычном запуске.
-
-При активном окне остаются запасные клавиши:
-
-- `N` / `P` — следующая / предыдущая цель;
-- `S` — пропустить до закрытия приложения;
-- `M` — отметить собранной и атомарно сохранить прогресс;
-- `U` — отменить последнее `skip` или `collected`;
-- `Q` / `Esc` — закрыть окно.
-
-Для каждого слоя запоминается своя цель. При потере трека, релокализации или
-невидимой миникарте цель остаётся закреплённой, но линия и показания замораживаются
-и сереют; стрелка скрывается до свежей подтверждённой позиции. Navigator никогда
-не выбирает POI другого региона, этажа или системы координат.
-
-### Калибровка расстояния
-
-Чтобы перевести единицы официальной карты в приблизительные игровые метры, один раз
-выполните три поверхностных замера:
-
-```powershell
-.venv\Scripts\genshin-navigator calibrate-distance `
-  --config config.json `
-  --output datasets\local\calibration\fontaine.json `
-  --samples 3
-```
-
-Для каждого замера выберите в игре относительно ровный отрезок 100–300 м. Прямо в
-игре нажмите `F8` для начала, переключитесь в окно калибровки, введите расстояние с
-игрового маркера и `Enter`, вернитесь в игру, пройдите до конца и снова нажмите `F8`.
-`C` остаётся запасной клавишей, но работает только при активном окне калибровки.
-Команда использует тот же screen gate,
-matcher и tracker, что live-режим, и не сохраняет полный экран. Результат принимается,
-только если все три коэффициента согласуются в пределах 10%. Неполная или ошибочная
-попытка остаётся в `fontaine.json.draft` и не заменяет последнюю рабочую калибровку.
-
-После успешной калибровки окно показывает `~123 m (straight)`. Это прямая 2D-дистанция,
-а не длина пешего маршрута: стены, входы в пещеры и перепад высоты пока не учитываются.
-Без рабочей калибровки отображается `distance=uncalibrated`; atlas-px никогда не
-выдаются за метры.
-
-Окно закрывается клавишей `Q`, `Esc` или обычной кнопкой закрытия. Трекер не отправляет
-ввод в Genshin: клавиши обрабатываются только когда активно его собственное окно.
-
-При включённом блоке `failure_recorder` переход уже установленного трека в `LOST`
-или невозможность найти начальную позицию дольше `acquisition_timeout_seconds`
-создаёт инцидент в `artifacts/failures`. В него входят только вырезанные миникарты до
-и после сбоя и `metadata.json` с диагностикой. Полный кадр игры не сохраняется. Если
-программа закрыта во время записи, неполный инцидент всё равно сохраняется.
-
-Блок `screen_gate` проверяет наличие постоянного компаса миникарты. При открытой
-полноэкранной карте, загрузке или `Alt+Tab` время трекера замораживается, статус окна
-становится `PAUSED`, а Failure Recorder не получает эти кадры. Проверка не зависит от
-цветов и содержания карты, поэтому не отбрасывает стандартную миникарту подземелий.
-
-Блок `local_search` включает сопровождение уже найденной позиции. После подтверждения
-трек ищется сначала в небольшом радиусе на том же слое карты, а при неудаче снова
-запускается глобальная локализация. Это помогает на однообразных дорогах и площадях,
-не ослабляя защиту от ложных совпадений в других частях мира.
-
-Отладочное окно автоматически показывает общий атлас для поверхности и переключается
-на соответствующее полотно этажа для подземной локации. Переход на другой этаж
-принимается только после нескольких последовательных совпадений с одним и тем же слоем.
-
-### Position Model v1
-
-Публичная позиция имеет единый контракт: `region_id`, `layer_id`,
-`coordinate_space`, `x`, `y`, `confidence`, `state`, `timestamp` и
-`reference_id`. Команды `locate`/`watch`, live-трекер и записи ошибок используют
-одни и те же поля. В JSON также всегда присутствует `schema_version=1`. Старые
-плоские `x_px`/`y_px` пока сохранены для совместимости.
-
-Семантика состояния является частью контракта. Координаты пригодны для потребителей
-только при `state=TRACKING` и `stale=false`. В `ACQUIRING` и `LOST` поле `position` отсутствует. В
-`RELOCATING` может публиковаться последняя подтверждённая позиция, но только с
-`stale=true`. Navigation/UI проверяют `state` и `stale`, а не интерпретируют
-внутренние SIFT-метрики самостоятельно.
-
-Для поверхности `coordinate_space=surface_atlas`: `x/y` относятся к общему атласу
-региона. Для подземелья `coordinate_space=layer_local`: `x/y` относятся прямо к
-изображению конкретного этажа, указанного в `layer_id`. Координаты разных этажей
-нельзя сравнивать или смешивать. Поэтому подземный маркер отображается на полотне
-своего этажа и больше не проецируется приблизительно на наземную карту Тейвата.
-
-Остановка — `Ctrl+C`. Коды завершения `locate`: `0` — позиция найдена, `2` —
-совпадение недостаточно надёжно, `1` — ошибка конфигурации или файла.
-
-Аннотированный локальный набор можно прогнать отдельной командой:
-
-```powershell
-.venv\Scripts\genshin-navigator evaluate datasets/local/fontaine_v1
-```
-
-Команда выводит долю найденных кадров, медианную/P95-ошибку и среднее время обработки.
-
-## Ограничения MVP
-
-Качество зависит от эталонной карты, масштаба интерфейса и наличия визуальных
-деталей. Подземные этажи хранятся отдельными картами и не имеют общей высотной
-координаты. ROI сейчас задаётся вручную. Навигация показывает прямое направление к
-цели, но пока не строит проходимый маршрут вокруг стен, через входы в пещеры или
-между высотами.
-
-Официальная интерактивная карта публикует подземные этажи отдельными изображениями с
-границами в общей системе координат HoYoLAB. Пилотную группу или область можно
-выгрузить вместе с привязкой так:
-
-```powershell
-.venv\Scripts\python scripts\fetch_hoyolab_underground.py `
-  datasets\local\references\hoyolab_underground_pilot --group-id 109
-
-.venv\Scripts\python scripts\fetch_hoyolab_underground.py temp --list-only `
-  --near -4348.5 -692.5 --radius 500
-```
-
-Для каждого этажа создаётся собственный `layer_id`; `metadata.json` содержит URL
-оригинала, размеры, мировые границы и формулу преобразования пикселей в координаты
-HoYoLAB. Для полной выгрузки нужно явно передать `--all`; для экспериментов лучше
-начинать с `--group-id` или `--near`.
-
-## Каталог POI Фонтейна
-
-Готовый каталог `datasets/local/poi/fontaine.json` собран из публичного API
-[официальной интерактивной карты HoYoLAB](https://act.hoyolab.com/ys/app/interactive-map/index.html#/map/2).
-Он содержит обычные, богатые, драгоценные, роскошные и удивительные сундуки,
-гидрокулы, статуи Архонтов и точки телепортации. Наземные метки переводятся в
-`surface_atlas`, подземные — в `layer_local` соответствующего этажа. Раздел `spaces`
-хранит линейную метрику поверхности и всех 59 этажей. Каталог старого формата без
-этого раздела по-прежнему загружается, но расстояние остаётся недоступным.
-
-Каталог и официальные подземные этажи можно обновить воспроизводимо:
-
-```powershell
-.venv\Scripts\python scripts\fetch_hoyolab_underground.py `
-  datasets\local\references\hoyolab_fontaine_underground --preset fontaine
-
-.venv\Scripts\python scripts\build_underground_pyramid.py `
-  datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
-  datasets\local\references\hoyolab_fontaine_full_n1\surface_pyramid.json `
-  datasets\local\references\hoyolab_fontaine_underground\metadata.json `
-  datasets\local\references\hoyolab_fontaine_full_n1\pyramid.json
-
-.venv\Scripts\python scripts\fetch_hoyolab_poi.py `
-  datasets\local\poi\fontaine.json `
-  --surface-metadata datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
-  --underground-metadata datasets\local\references\hoyolab_fontaine_underground\metadata.json
-```
-
-Готовый пресет Фонтейна включает Великое озеро, крепость Меропид, Элинас,
-Аннапаузис, Эриний и Ремурию. Полный атлас и пирамиду можно пересобрать так:
-
-```powershell
-.venv\Scripts\python scripts\fetch_hoyolab_atlas.py `
-  datasets\local\references\hoyolab_fontaine_full_n1 `
-  --zoom N1 --x 32:43 --y 12:23
-
-.venv\Scripts\python scripts\fetch_hoyolab_underground.py `
-  datasets\local\references\hoyolab_fontaine_underground --preset fontaine
-
-.venv\Scripts\python scripts\build_underground_pyramid.py `
-  datasets\local\references\hoyolab_fontaine_full_n1\metadata.json `
-  datasets\local\references\hoyolab_fontaine_full_n1\surface_pyramid.json `
-  datasets\local\references\hoyolab_fontaine_underground\metadata.json `
-  datasets\local\references\hoyolab_fontaine_full_n1\pyramid.json
-```
-
-`fetch_hoyolab_atlas.py` создаёт безопасный базовый
-`surface_pyramid.json`; следующая команда добавляет к нему официальные подземные
-слои и пишет итоговый `pyramid.json`. После этого выполните команду выгрузки POI
-из предыдущего блока и проверьте пути в `config.json`.
-
-Проверка по парным скриншотам игры и внутриигровой карты:
-
-```powershell
-.venv\Scripts\python scripts\evaluate_pyramid_screenshots.py `
-  datasets\local\fontaine_underground_v1 --config config.json
-```
-
-Текущий baseline использует SIFT-признаки: они устойчивы к разнице масштаба между
-миникартой и эталоном. Центральная стрелка игрока и край круглой миникарты исключаются
-из анализа маской.
-
-Если задан `pyramid_path`, локализатор автоматически проверяет базовый атлас и
-детальные уровни. Поверхностные уровни приводятся к координатам общего атласа,
-а подземные сохраняют точные локальные координаты собственного этажа.
-
-Для локальных экспериментов эталон можно собрать из уже идентифицированного публичного
-слоя HoYoLAB:
-
-```powershell
-.venv\Scripts\python scripts\fetch_hoyolab_atlas.py `
-  datasets\local\references\hoyolab_fontaine_n1 --zoom N1 --x 32:43 --y 12:19
-```
-
-Подробный уровень центрального Фонтейна можно собрать из тайлов Appsample уровня 15
-и автоматически привязать к каноническому атласу:
-
-```powershell
-.venv\Scripts\python scripts\fetch_appsample_atlas.py `
-  datasets\local\references\appsample_fontaine_l15
-
-.venv\Scripts\python scripts\build_scaled_reference.py `
-  datasets\local\references\appsample_fontaine_l15\atlas.png `
-  datasets\local\references\appsample_fontaine_l15\atlas_x2.png --scale 0.5
-
-.venv\Scripts\python scripts\register_reference.py `
-  datasets\local\references\hoyolab_fontaine_n1\atlas.png `
-  datasets\local\references\appsample_fontaine_l15\atlas_x2.png `
-  datasets\local\references\appsample_fontaine_l15\registration_x2.json `
-  --match-scale 1.0
-
-.venv\Scripts\python scripts\crop_registered_reference.py `
-  datasets\local\references\appsample_fontaine_l15\atlas.png `
-  datasets\local\references\appsample_fontaine_l15\registration.json `
-  datasets\local\references\appsample_fontaine_l15\regions\court_of_fontaine_x4.png `
-  --x 1800 --y 1300 --width 1800 --height 1800
-
-.venv\Scripts\python scripts\crop_registered_reference.py `
-  datasets\local\references\appsample_fontaine_l15\atlas.png `
-  datasets\local\references\appsample_fontaine_l15\registration.json `
-  datasets\local\references\appsample_fontaine_l15\regions\epicles_x4.png `
-  --x 3600 --y 1500 --width 1800 --height 1800
-```
-
-Тайлы и собранный атлас остаются в исключённом из Git каталоге `datasets/local`.
-Перед распространением таких данных отдельно проверьте условия использования источника.
-
-## Проверка
-
-```powershell
-.venv\Scripts\python -m unittest discover -s tests -v
-```
-
-Сохранённый Failure Recorder инцидент можно воспроизвести без запуска игры:
-
-```powershell
-.venv\Scripts\python scripts\replay_failure.py artifacts\failures\<incident>
-```
-
-## Сценарный benchmark
-
-Recorder сохраняет только crop миникарты с монотонным временем. Полный экран и UID
-на диск не пишутся. Запись начинается сразу после запуска команды, а частота берётся
-из `interval_seconds` текущей конфигурации.
-
-Три базовых сценария записываются в исключённый из Git каталог:
-
-```powershell
-.venv\Scripts\genshin-navigator record-sequence `
-  datasets\local\scenarios\surface_walk --config config.json --duration 20 `
-  --name "surface walk and stop" --expected-start-layer surface `
-  --expected-end-layer surface --stationary-last-seconds 5
-
-.venv\Scripts\genshin-navigator record-sequence `
-  datasets\local\scenarios\surface_teleport --config config.json --duration 30 `
-  --name "surface teleport" --expected-start-layer surface `
-  --expected-end-layer surface
-
-.venv\Scripts\genshin-navigator record-sequence `
-  datasets\local\scenarios\layer_transition --config config.json --duration 30 `
-  --name "surface to underground" --expected-start-layer surface `
-  --expected-end-layer underground:map2:group90:floor78
-```
-
-В третьей команде замените конечный `layer_id` на реально выбранный этаж из
-`pyramid.json`. Начальную и конечную точки сверяйте по внутриигровой карте; при
-необходимости добавьте их в `scenario.json` как контрольные позиции по схеме из
-`datasets/README.md`.
-
-Replay проходит тем же путём, что live-режим: screen gate → matcher/local search →
-tracker. Он ничего не захватывает с экрана:
-
-```powershell
-.venv\Scripts\genshin-navigator evaluate-sequence `
-  datasets\local\scenarios\surface_walk --config config.json `
-  --report artifacts\benchmarks\surface_walk.json
-```
-
-JSON-отчёт различает отсутствие позиции и false lock, измеряет точность слоя,
-acquire/reacquire, длительность `LOST`, stationary jitter и среднюю/P95 задержку.
-Длительность `LOST` учитывает только время с видимой миникартой; открытая карта,
-загрузка и Alt+Tab считаются паузой screen gate.
-Критерии контрольной проверки: false locks = 0, нет одно-кадровых смен слоя,
-tracking coverage ≥ 95%, longest untracked streak ≤ 2 с, reacquire P95 ≤ 3 с и
-P95 jitter ≤ 5 atlas-px. Coverage и untracked streak считаются только внутри
-`tracking: required` при видимой миникарте.
-
-### Sumeru portability v2
-
-Четыре локальные записи создаются текущим base-only конфигом; кадры остаются в
-`datasets/local`:
-
-```powershell
-.venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_walk `
-  --config config.sumeru-portability.example.json --duration 20 --name "desert walk and stop" `
-  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5 --required-throughout
-
-.venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_teleport `
-  --config config.sumeru-portability.example.json --duration 30 --name "desert teleport" `
-  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5 --required-throughout
-
-.venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_landmark `
-  --config config.sumeru-portability.example.json --duration 20 --name "desert second landmark" `
-  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5 --required-throughout
-
-.venv\Scripts\genshin-navigator record-sequence datasets\local\scenarios\sumeru_desert_ruins `
-  --config config.sumeru-portability.example.json --duration 20 --name "desert sparse ruins" `
-  --expected-start-layer surface --expected-end-layer surface --stationary-last-seconds 5 --required-throughout
-```
-
-После записи контрольные позиции ставятся кликом по каноническому атласу:
-
-```powershell
-.venv\Scripts\genshin-navigator annotate-scenario `
-  datasets\local\scenarios\sumeru_desert_walk `
-  --config config.sumeru-portability.example.json
-```
-
-`A/D` или стрелки выбирают кадр, левый клик ставит/заменяет checkpoint, правый
-клик удаляет, `+/-` меняет допуск, Enter сохраняет атомарно, Esc выходит без
-изменений. Для каждого gating-сценария нужны минимум две позиции; для движения
-рекомендуются начало, середина и конец.
-
-Base-only baseline запускается отдельно и не перезаписывается кандидатом:
-
-```powershell
-.venv\Scripts\genshin-navigator benchmark-suite `
-  benchmarks\sumeru-desert-portability.example.json `
-  --config config.sumeru-portability.example.json `
-  --report datasets\local\portability\sumeru-base-v2.json
-```
-
-Detail-reference должен быть настоящим более подробным crop, а не resize N1.
-Сначала его регистрируют через `scripts/register_reference.py`, затем собирают
-candidate pyramid. Скрипт отклонит регистрацию слабее 20 inliers или с median
-error выше 2 canonical px:
-
-```powershell
-.venv\Scripts\python scripts\build_detail_pyramid.py `
-  datasets\local\references\hoyolab_sumeru_desert_n1\surface_pyramid.json `
-  datasets\local\references\sumeru_ruins_detail\ruins.png `
-  datasets\local\references\sumeru_ruins_detail\registration.json `
-  datasets\local\references\hoyolab_sumeru_desert_n1\detail_pyramid.json `
-  --id sumeru_ruins_detail --source appsample --resolution-scale 2
-```
-
-Итоговое сравнение требует также Fontaine regression suite. Без него кандидат
-может получить только verdict `candidate_passed_regression_not_run`:
-
-```powershell
-.venv\Scripts\genshin-navigator benchmark-compare `
-  benchmarks\sumeru-desert-portability.example.json `
-  --baseline-config config.sumeru-portability.example.json `
-  --candidate-config config.sumeru-portability-detail.example.json `
-  --regression-manifest benchmarks\fontaine-golden.example.json `
-  --regression-config config.json `
-  --report datasets\local\portability\sumeru-detail-comparison.json
-```
+[MIT](LICENSE). Названия Genshin Impact и HoYoLAB принадлежат правообладателям.

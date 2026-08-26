@@ -1,0 +1,17 @@
+{
+  "format_version": 1,
+  "regions": [
+    {
+      "id": "fontaine",
+      "display_name": "Фонтейн",
+      "support": "supported",
+      "config": "config.example.json"
+    },
+    {
+      "id": "sumeru_desert",
+      "display_name": "Сумеру — пустыня",
+      "support": "experimental",
+      "config": "config.sumeru.example.json"
+    }
+  ]
+}

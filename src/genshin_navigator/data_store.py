@@ -216,17 +216,25 @@ class SqliteDataProvider:
                 "SELECT COUNT(*) FROM pois WHERE region_id = ? AND active = 0", (region_id,)
             ).fetchone()[0])
             collected = int(connection.execute(
-                "SELECT COUNT(*) FROM progress WHERE collected = 1"
+                "SELECT COUNT(*) FROM progress p JOIN pois i ON i.poi_id=p.poi_id "
+                "WHERE i.region_id=? AND p.collected=1",
+                (region_id,),
             ).fetchone()[0])
             pending_sync = int(connection.execute(
-                "SELECT COUNT(*) FROM progress WHERE collected = 1 "
-                "AND sync_state IN ('local', 'pending_push', 'sync_error')"
+                "SELECT COUNT(*) FROM progress p JOIN pois i ON i.poi_id=p.poi_id "
+                "WHERE i.region_id=? AND p.collected=1 "
+                "AND p.sync_state IN ('local', 'pending_push', 'sync_error')",
+                (region_id,),
             ).fetchone()[0])
             sync_errors = int(connection.execute(
-                "SELECT COUNT(*) FROM progress WHERE sync_state = 'sync_error'"
+                "SELECT COUNT(*) FROM progress p JOIN pois i ON i.poi_id=p.poi_id "
+                "WHERE i.region_id=? AND p.sync_state='sync_error'",
+                (region_id,),
             ).fetchone()[0])
             remote_ignored = int(connection.execute(
-                "SELECT COUNT(*) FROM progress WHERE remote_ignored = 1"
+                "SELECT COUNT(*) FROM progress p JOIN pois i ON i.poi_id=p.poi_id "
+                "WHERE i.region_id=? AND p.remote_ignored=1",
+                (region_id,),
             ).fetchone()[0])
             last_sync = connection.execute(
                 "SELECT completed_at, status, pull_count, push_count, unknown_count, "
@@ -323,21 +331,32 @@ def open_data_bundle(
 def collect_assets(
     region_id: str,
     surface_metadata_path: str | Path,
-    underground_metadata_path: str | Path,
+    underground_metadata_path: str | Path | None,
     *,
     pyramid_path: str | Path | None = None,
 ) -> list[AssetRecord]:
     surface_path = Path(surface_metadata_path)
-    underground_path = Path(underground_metadata_path)
-    underground = json.loads(underground_path.read_text(encoding="utf-8"))
     assets = [
         AssetRecord(region_id, "surface", "atlas", surface_path.parent / "atlas.png"),
         AssetRecord(region_id, "surface", "metadata", surface_path),
-        AssetRecord(region_id, "surface", "underground_metadata", underground_path),
     ]
+    underground_path = (
+        Path(underground_metadata_path)
+        if underground_metadata_path is not None
+        else None
+    )
+    underground: dict[str, object] = {}
+    if underground_path is not None:
+        underground = json.loads(underground_path.read_text(encoding="utf-8"))
+        assets.append(
+            AssetRecord(
+                region_id, "surface", "underground_metadata", underground_path
+            )
+        )
     if pyramid_path is not None:
         assets.append(AssetRecord(region_id, "surface", "pyramid", Path(pyramid_path)))
     for group in underground.get("groups", []):
+        assert underground_path is not None
         for floor in group.get("floors", []):
             assets.append(
                 AssetRecord(

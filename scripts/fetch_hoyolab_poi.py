@@ -16,17 +16,21 @@ from genshin_navigator.hoyolab_poi import (
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build a Fontaine POI catalog from HoYoLAB")
+    parser = argparse.ArgumentParser(description="Build a regional POI catalog from HoYoLAB")
     parser.add_argument("output", type=Path)
     parser.add_argument("--surface-metadata", type=Path, required=True)
-    parser.add_argument("--underground-metadata", type=Path, required=True)
+    parser.add_argument("--underground-metadata", type=Path)
     parser.add_argument("--map-version", default=None)
     parser.add_argument("--lang", default="ru-ru")
     parser.add_argument("--area-id", type=int, default=8)
     args = parser.parse_args()
 
     surface = json.loads(args.surface_metadata.read_text(encoding="utf-8"))
-    underground = json.loads(args.underground_metadata.read_text(encoding="utf-8"))
+    underground = (
+        json.loads(args.underground_metadata.read_text(encoding="utf-8"))
+        if args.underground_metadata is not None
+        else None
+    )
     labels = fetch_labels(lang=args.lang, map_version=args.map_version)
     points = fetch_points(lang=args.lang, map_version=args.map_version)
     pois, stats = build_catalog(

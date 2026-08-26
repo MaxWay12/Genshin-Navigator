@@ -44,6 +44,8 @@ from .progress_sync import (
 from .progress_backup import ProgressTransferService
 from .scenario import evaluate_scenario, record_scenario
 from .scenario_annotation import annotate_scenario
+from .region_manifest import load_region_manifest
+from . import __version__
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -51,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="genshin-navigator",
         description="Passive minimap-based position estimator",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     capture = subparsers.add_parser("capture", help="Save a desktop screenshot for ROI setup")
@@ -65,6 +68,14 @@ def _parser() -> argparse.ArgumentParser:
 
     track = subparsers.add_parser("track", help="Track and show a passive debug map")
     track.add_argument("--config", default="config.json")
+    track.add_argument(
+        "--regions", default=None,
+        help="Optional product region manifest used with --region",
+    )
+    track.add_argument(
+        "--region", default=None,
+        help="Product region id from --regions",
+    )
 
     evaluate = subparsers.add_parser("evaluate", help="Measure localization on an annotated dataset")
     evaluate.add_argument("dataset", help="Directory containing annotations.json")
@@ -149,7 +160,7 @@ def _parser() -> argparse.ArgumentParser:
     calibrate.add_argument("--samples", type=int, default=3)
 
     sync_data = subparsers.add_parser(
-        "sync-data", help="Atomically update the offline Fontaine data store"
+        "sync-data", help="Atomically update an offline regional data store"
     )
     sync_data.add_argument("--config", default="config.json")
     sync_data.add_argument("--region", default=None)
@@ -276,15 +287,15 @@ def _progress_sync_service(config: AppConfig) -> ProgressSyncService:
 def _sync_data(config: AppConfig, region_id: str, map_version: str | None) -> dict[str, object]:
     if config.data.storage_backend == "json":
         raise ValueError("sync-data requires data.storage_backend=auto or sqlite")
-    if config.data.surface_metadata_path is None or config.data.underground_metadata_path is None:
-        raise ValueError(
-            "sync-data requires data.surface_metadata_path and underground_metadata_path"
-        )
+    if config.data.surface_metadata_path is None:
+        raise ValueError("sync-data requires data.surface_metadata_path")
     surface = json.loads(
         config.data.surface_metadata_path.read_text(encoding="utf-8")
     )
-    underground = json.loads(
-        config.data.underground_metadata_path.read_text(encoding="utf-8")
+    underground = (
+        json.loads(config.data.underground_metadata_path.read_text(encoding="utf-8"))
+        if config.data.underground_metadata_path is not None
+        else None
     )
     if str(surface.get("region_id", region_id)) != region_id:
         raise ValueError("Surface metadata region does not match requested region")
@@ -551,7 +562,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0 if report["accepted"] else 2
 
-        config = load_config(args.config)
+        config_path = args.config
+        if args.command == "track" and args.region is not None:
+            if args.regions is None:
+                raise ValueError("track --region requires --regions")
+            config_path = load_region_manifest(args.regions).get(args.region).config_path
+        config = load_config(config_path)
         if args.command == "annotate-scenario":
             atlas_path = config.debug_map_path or config.map_path
             if atlas_path is None:

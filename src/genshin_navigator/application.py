@@ -26,6 +26,7 @@ from .poi_guidance import HoyoLabPoiHintProvider, PoiHintService, SqlitePoiHintR
 from .pyramid import Locator, PyramidMatcher, load_pyramid
 from .screen_gate import MinimapScreenGate
 from .tracker import LiveTracker
+from . import __version__
 
 
 def build_locator(config: AppConfig) -> Locator:
@@ -170,7 +171,7 @@ class LiveApplication:
         try:
             app_version = version("genshin-navigator")
         except PackageNotFoundError:
-            app_version = "development"
+            app_version = __version__
         content_version = None
         if data is not None and data.provider is not None:
             content_version = data.provider.status(self.config.data.region_id).get(

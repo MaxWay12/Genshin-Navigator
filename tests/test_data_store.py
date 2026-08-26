@@ -186,6 +186,29 @@ class SqliteDataProviderTests(unittest.TestCase):
         self.assertEqual(provider.progress().collected_ids, {"removed"})
         self.assertEqual(provider.status()["inactive_poi_count"], 1)
 
+    def test_status_progress_counts_are_region_scoped(self) -> None:
+        provider = SqliteDataProvider(self.database)
+        provider.replace_content(
+            "fontaine", [poi("fontaine-chest")], [metric()],
+            content_version="fontaine-v1",
+        )
+        sumeru_metric = MapSpaceMetric(
+            "sumeru_desert", "surface", CoordinateSpace.SURFACE_ATLAS,
+            ((2.0, 0.0), (0.0, 2.0)),
+        )
+        sumeru_poi = PointOfInterest(
+            "sumeru-chest", "chest", "sumeru", "sumeru_desert", "surface",
+            CoordinateSpace.SURFACE_ATLAS, 10.0, 20.0,
+        )
+        provider.replace_content(
+            "sumeru_desert", [sumeru_poi], [sumeru_metric],
+            content_version="sumeru-v1",
+        )
+        provider.progress().mark_collected("fontaine-chest")
+
+        self.assertEqual(provider.status("fontaine")["collected_count"], 1)
+        self.assertEqual(provider.status("sumeru_desert")["collected_count"], 0)
+
     def test_unknown_map_space_rejects_update_and_preserves_snapshot(self) -> None:
         provider = SqliteDataProvider(self.database)
         provider.replace_content(

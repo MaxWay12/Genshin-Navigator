@@ -18,3 +18,8 @@ secrets*.json
 *.secret
 captures/
 recordings/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+WebView2/
