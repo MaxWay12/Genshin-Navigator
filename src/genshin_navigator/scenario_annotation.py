@@ -92,6 +92,14 @@ class ScenarioAnnotation:
     def move(self, delta: int) -> None:
         self.frame_index = max(0, min(len(self.frames) - 1, self.frame_index + delta))
 
+    def nearest_frame_index(self, timestamp: float) -> int:
+        return min(
+            range(len(self.frames)),
+            key=lambda index: abs(
+                float(self.frames[index]["timestamp_seconds"]) - timestamp
+            ),
+        )
+
     def checkpoint_for_current_frame(self) -> dict[str, object] | None:
         timestamp = self.current_timestamp
         return next(
@@ -149,12 +157,25 @@ class ScenarioAnnotation:
 class ScenarioAnnotationView:
     WINDOW = "Genshin Navigator - Scenario Annotation"
 
-    def __init__(self, session: ScenarioAnnotation) -> None:
+    def __init__(
+        self,
+        session: ScenarioAnnotation,
+        suggested_timestamps: tuple[float, ...] = (),
+    ) -> None:
         self.session = session
         self.viewport: AtlasViewport | None = None
         self.saved = False
         self.zoom = 1.0
         self.zoom_center: tuple[float, float] | None = None
+        self.suggested_indices = tuple(
+            dict.fromkeys(
+                session.nearest_frame_index(float(timestamp))
+                for timestamp in suggested_timestamps
+            )
+        )
+        self.suggested_cursor = 0
+        if self.suggested_indices:
+            self.session.frame_index = self.suggested_indices[0]
 
     def _atlas_region(self, available_w: int, available_h: int) -> tuple[int, int, int, int]:
         atlas_h, atlas_w = self.session.atlas.shape[:2]
@@ -172,6 +193,17 @@ class ScenarioAnnotationView:
 
     def _move(self, delta: int) -> None:
         self.session.move(delta)
+        self.zoom = 1.0
+        self.zoom_center = None
+
+    def _move_suggested(self, delta: int) -> None:
+        if not self.suggested_indices:
+            return
+        self.suggested_cursor = max(
+            0,
+            min(len(self.suggested_indices) - 1, self.suggested_cursor + delta),
+        )
+        self.session.frame_index = self.suggested_indices[self.suggested_cursor]
         self.zoom = 1.0
         self.zoom_center = None
 
@@ -224,12 +256,17 @@ class ScenarioAnnotationView:
             f"checkpoints={len(self.session.checkpoints)} "
             f"tolerance={self.session.tolerance_px:.0f}px zoom={self.zoom:.0f}x"
         )
+        if self.suggested_indices:
+            count_text += (
+                f" target={self.suggested_cursor + 1}/{len(self.suggested_indices)}"
+            )
         cv2.putText(canvas, index_text, (15, 365), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (235, 235, 235), 1, cv2.LINE_AA)
         cv2.putText(canvas, time_text, (15, 395), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (235, 235, 235), 1, cv2.LINE_AA)
         cv2.putText(canvas, count_text, (15, 425), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 220, 120), 1, cv2.LINE_AA)
         instructions = [
             "A/D or arrows: frame",
             "J/L: 10 frames   Home/End",
+            "B/N: previous/next suggested time",
             "Left click: area, then refine at 4x",
             "Right click or Delete: remove",
             "Z: reset zoom   +/-: tolerance",
@@ -276,6 +313,10 @@ class ScenarioAnnotationView:
                     self._move(-10)
                 elif key in (ord("l"), ord("L"), 2228224):
                     self._move(10)
+                elif key in (ord("b"), ord("B")):
+                    self._move_suggested(-1)
+                elif key in (ord("n"), ord("N")):
+                    self._move_suggested(1)
                 elif key == 2359296:
                     self.session.frame_index = 0
                     self.zoom = 1.0
@@ -308,6 +349,7 @@ def annotate_scenario(
     region_id: str,
     layer_id: str = "surface",
     tolerance_px: float = 35.0,
+    suggested_timestamps: tuple[float, ...] | list[float] = (),
 ) -> bool:
     return ScenarioAnnotationView(
         ScenarioAnnotation(
@@ -316,5 +358,6 @@ def annotate_scenario(
             region_id=region_id,
             layer_id=layer_id,
             tolerance_px=tolerance_px,
-        )
+        ),
+        tuple(float(timestamp) for timestamp in suggested_timestamps),
     ).run()

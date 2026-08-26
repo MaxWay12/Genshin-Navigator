@@ -10,7 +10,11 @@ import cv2
 import numpy as np
 
 from genshin_navigator.scenario import load_scenario
-from genshin_navigator.scenario_annotation import AtlasViewport, ScenarioAnnotation
+from genshin_navigator.scenario_annotation import (
+    AtlasViewport,
+    ScenarioAnnotation,
+    ScenarioAnnotationView,
+)
 
 
 class ScenarioAnnotationTests(unittest.TestCase):
@@ -94,6 +98,26 @@ class ScenarioAnnotationTests(unittest.TestCase):
             (root / "scenario.json").write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "outside the recording"):
                 load_scenario(root)
+
+    def test_suggested_timestamps_jump_to_nearest_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, atlas = self._fixture(Path(temporary))
+            payload = json.loads((root / "scenario.json").read_text(encoding="utf-8"))
+            payload["frames"] = [
+                {"image": "frames/frame.png", "timestamp_seconds": timestamp}
+                for timestamp in (0.0, 0.1, 0.2, 0.3)
+            ]
+            (root / "scenario.json").write_text(json.dumps(payload), encoding="utf-8")
+            session = ScenarioAnnotation(root, atlas, region_id="sumeru_desert")
+            view = ScenarioAnnotationView(session, (0.09, 0.29))
+
+            self.assertEqual(session.frame_index, 1)
+            view._move_suggested(1)
+            self.assertEqual(session.frame_index, 3)
+            view._move_suggested(1)
+            self.assertEqual(session.frame_index, 3)
+            view._move_suggested(-1)
+            self.assertEqual(session.frame_index, 1)
 
 
 if __name__ == "__main__":

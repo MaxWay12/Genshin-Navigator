@@ -40,7 +40,8 @@ Add checkpoints immediately before, inside, and after every sparse or ruined seg
   datasets/local/scenarios/sumeru_long_validation `
   --config config.sumeru-portability-anchors.example.json `
   --region sumeru_desert `
-  --layer surface
+  --layer surface `
+  --timestamps 0.28 7.5 9.3 77.0 78.6 103.0 104.6 114.8 115.8 118.0 122.0 133.8 135.5 137.7 140.0 142.3 147.9 149.0 193.4 220.0
 
 .venv\Scripts\genshin-navigator evaluate-sequence `
   datasets/local/scenarios/sumeru_long_validation `
@@ -52,3 +53,6 @@ The report includes positional P50/P95, edge ambiguity margins, absolute-fix age
 tracking coverage, false locks, reacquisition, visible LOST streaks, and per-checkpoint
 predicted/ground-truth positions. A checkpoint only attributes an edge margin when its
 nearest replay frame actually used an accepted edge-correlation fix.
+Use `N` and `B` to jump between the suggested times. A coarse click zooms the atlas;
+click the same position again to refine it, then press `N`. Press Enter once all
+suggested positions are set.

@@ -130,6 +130,13 @@ def _parser() -> argparse.ArgumentParser:
     annotate.add_argument("--region", default=None)
     annotate.add_argument("--layer", default="surface")
     annotate.add_argument("--tolerance-px", type=float, default=35.0)
+    annotate.add_argument(
+        "--timestamps",
+        type=float,
+        nargs="*",
+        default=(),
+        help="Optional target times; N/B jumps between their nearest frames",
+    )
 
     calibrate = subparsers.add_parser(
         "calibrate-distance",
@@ -555,6 +562,7 @@ def main(argv: list[str] | None = None) -> int:
                 region_id=args.region or config.data.region_id,
                 layer_id=args.layer,
                 tolerance_px=args.tolerance_px,
+                suggested_timestamps=args.timestamps,
             )
             print("Scenario checkpoints saved." if saved else "Annotation cancelled; no changes were made.")
             return 0 if saved else 2
