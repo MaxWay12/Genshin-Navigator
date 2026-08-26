@@ -66,6 +66,10 @@ class LiveTracker:
             result.match_method == "template"
             and result.inliers >= 3
             and result.confidence >= max(self.config.min_confidence, 0.55)
+        ) or (
+            result.match_method == "anchors"
+            and result.matches >= 1
+            and result.confidence >= max(self.config.min_confidence, 0.5)
         )
         return bool(
             result.found

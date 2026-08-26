@@ -9,6 +9,7 @@ from typing import Protocol
 import cv2
 import numpy as np
 
+from .anchor_localization import AnchorLocalizer
 from .capture import load_image
 from .config import LocalSearchConfig, MatcherConfig
 from .matcher import CandidateMatch, LocateResult, MinimapMatcher, UndergroundMinimapMatcher
@@ -66,6 +67,7 @@ class PyramidMatcher:
         levels: list[PyramidLevel],
         early_accept_confidence: float = 0.98,
         region_id: str = "unknown",
+        anchor_localizer: AnchorLocalizer | None = None,
     ):
         width, height = canonical_size
         if width <= 0 or height <= 0:
@@ -78,6 +80,7 @@ class PyramidMatcher:
         self.levels = levels
         self.early_accept_confidence = early_accept_confidence
         self.region_id = region_id
+        self.anchor_localizer = anchor_localizer
 
     @property
     def layer_labels(self) -> dict[str, str]:
@@ -210,6 +213,8 @@ class PyramidMatcher:
             if local_result.found:
                 canonical_result = self._to_position(local_result, level)
                 if canonical_result.found:
+                    if self.anchor_localizer is not None:
+                        self.anchor_localizer.observe_primary(canonical_result)
                     candidates.append(canonical_result)
                     if (
                         canonical_result.confidence >= self.early_accept_confidence
@@ -245,7 +250,13 @@ class PyramidMatcher:
 
         if candidates:
             best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            if self.anchor_localizer is not None:
+                self.anchor_localizer.observe_primary(best)
             return self._with_candidates(best, candidates + failures)
+        if self.anchor_localizer is not None:
+            anchored = self.anchor_localizer.locate(minimap)
+            if anchored.found:
+                return self._with_candidates(anchored, failures + [anchored])
         best = max(failures, key=lambda item: (item.inliers, item.matches, item.confidence))
         best = replace(best, reason="no_pyramid_level_matched")
         return self._with_candidates(best, failures)
@@ -318,6 +329,8 @@ class PyramidMatcher:
                 failures.append(self._tag_failure(local_result, level))
         if candidates:
             best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            if self.anchor_localizer is not None:
+                self.anchor_localizer.observe_primary(best)
             return self._with_candidates(best, candidates + failures)
         for level in fallback_levels:
             fallback = level.matcher.locate_fallback(minimap)  # type: ignore[attr-defined]
@@ -331,7 +344,13 @@ class PyramidMatcher:
                 candidates.append(canonical)
         if candidates:
             best = max(candidates, key=lambda item: (item.confidence, item.inliers, item.matches))
+            if self.anchor_localizer is not None:
+                self.anchor_localizer.observe_primary(best)
             return self._with_candidates(best, candidates + failures)
+        if self.anchor_localizer is not None:
+            anchored = self.anchor_localizer.locate_near(minimap, position)
+            if anchored.found:
+                return self._with_candidates(anchored, failures + [anchored])
         if failures:
             best = max(failures, key=lambda item: (item.inliers, item.matches, item.confidence))
             best = replace(best, reason="no_local_level_matched")
@@ -345,7 +364,11 @@ class PyramidMatcher:
         )
 
 
-def load_pyramid(path: str | Path, config: MatcherConfig | None = None) -> PyramidMatcher:
+def load_pyramid(
+    path: str | Path,
+    config: MatcherConfig | None = None,
+    anchor_localizer: AnchorLocalizer | None = None,
+) -> PyramidMatcher:
     manifest_path = Path(path).resolve()
     with manifest_path.open("r", encoding="utf-8") as stream:
         raw = json.load(stream)
@@ -388,4 +411,14 @@ def load_pyramid(path: str | Path, config: MatcherConfig | None = None) -> Pyram
                 floor_label=str(metadata.get("label") or ""),
             )
         )
-    return PyramidMatcher((width, height), levels, region_id=region_id)
+    if anchor_localizer is not None:
+        if anchor_localizer.region_id != region_id:
+            raise ValueError("Anchor catalog region does not match pyramid region")
+        if anchor_localizer.canonical_size != (width, height):
+            raise ValueError("Anchor catalog size does not match pyramid canonical size")
+    return PyramidMatcher(
+        (width, height),
+        levels,
+        region_id=region_id,
+        anchor_localizer=anchor_localizer,
+    )

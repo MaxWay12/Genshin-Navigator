@@ -9,6 +9,7 @@ from datetime import timedelta
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from .anchor_localization import AnchorLocalizer
 from .calibration import load_calibration
 from .capture import crop_roi, grab_screen, load_image
 from .config import AppConfig
@@ -27,7 +28,15 @@ from .tracker import LiveTracker
 
 def build_locator(config: AppConfig) -> Locator:
     if config.pyramid_path is not None:
-        return load_pyramid(config.pyramid_path, config.matcher)
+        anchor_localizer = (
+            AnchorLocalizer.from_config(config.anchor_localization)
+            if config.anchor_localization.enabled else None
+        )
+        return load_pyramid(
+            config.pyramid_path,
+            config.matcher,
+            anchor_localizer=anchor_localizer,
+        )
     if config.map_path is None:
         raise ValueError("A map_path or pyramid_path is required")
     return MinimapMatcher(load_image(config.map_path), config.matcher)

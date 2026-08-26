@@ -71,6 +71,37 @@ class LocalSearchConfig:
 
 
 @dataclass(frozen=True)
+class AnchorLocalizationConfig:
+    """Optional semantic-map anchors used after normal feature matching fails."""
+
+    enabled: bool = False
+    catalog_path: Path | None = None
+    template_paths: dict[str, Path] = field(default_factory=dict)
+    min_template_score: float = 0.30
+    min_global_anchors: int = 3
+    local_match_radius_px: float = 45.0
+    max_residual_px: float = 12.0
+    default_canonical_scale: float = 0.83
+
+    def __post_init__(self) -> None:
+        if self.enabled and (self.catalog_path is None or not self.template_paths):
+            raise ValueError(
+                "anchor_localization requires catalog_path and template_paths when enabled"
+            )
+        if not 0 < self.min_template_score <= 1:
+            raise ValueError("anchor_localization.min_template_score must be within (0, 1]")
+        if self.min_global_anchors < 2:
+            raise ValueError("anchor_localization.min_global_anchors must be at least 2")
+        if (
+            self.local_match_radius_px <= 0
+            or self.max_residual_px <= 0
+        ):
+            raise ValueError("anchor localization radii must be positive")
+        if not 0.2 <= self.default_canonical_scale <= 5.0:
+            raise ValueError("anchor default scale is implausible")
+
+
+@dataclass(frozen=True)
 class FailureRecorderConfig:
     enabled: bool = False
     output_dir: Path = Path("artifacts/failures")
@@ -243,6 +274,9 @@ class AppConfig:
     matcher: MatcherConfig = field(default_factory=MatcherConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     local_search: LocalSearchConfig = field(default_factory=LocalSearchConfig)
+    anchor_localization: AnchorLocalizationConfig = field(
+        default_factory=AnchorLocalizationConfig
+    )
     failure_recorder: FailureRecorderConfig = field(default_factory=FailureRecorderConfig)
     screen_gate: ScreenGateConfig = field(default_factory=ScreenGateConfig)
     poi: PoiConfig = field(default_factory=PoiConfig)
@@ -298,6 +332,15 @@ def load_config(path: str | Path) -> AppConfig:
     screen_gate_raw = dict(raw.get("screen_gate", {}))
     template_value = screen_gate_raw.pop("template_path", None)
     screen_gate_template = resolve_optional(template_value)
+
+    anchor_raw = dict(raw.get("anchor_localization", {}))
+    anchor_catalog = resolve_optional(anchor_raw.pop("catalog_path", None))
+    anchor_templates = {
+        str(kind): resolve_optional(value)
+        for kind, value in dict(anchor_raw.pop("template_paths", {})).items()
+    }
+    if any(path is None for path in anchor_templates.values()):
+        raise ValueError("anchor_localization template paths must not be null")
 
     poi_raw = dict(raw.get("poi", {}))
     poi_catalog = resolve_optional(poi_raw.pop("catalog_path", None))
@@ -370,6 +413,11 @@ def load_config(path: str | Path) -> AppConfig:
         matcher=MatcherConfig(**raw.get("matcher", {})),
         tracker=TrackerConfig(**raw.get("tracker", {})),
         local_search=LocalSearchConfig(**raw.get("local_search", {})),
+        anchor_localization=AnchorLocalizationConfig(
+            catalog_path=anchor_catalog,
+            template_paths={kind: path for kind, path in anchor_templates.items() if path is not None},
+            **anchor_raw,
+        ),
         failure_recorder=FailureRecorderConfig(
             output_dir=recorder_output, **recorder_raw
         ),

@@ -136,6 +136,22 @@ class LiveTrackerTests(unittest.TestCase):
         self.assertEqual(first.state, TrackerState.ACQUIRING)
         self.assertEqual(second.state, TrackerState.TRACKING)
 
+    def test_accepts_repeated_semantic_anchor_evidence(self) -> None:
+        anchor = LocateResult(
+            found=True,
+            x_px=100,
+            y_px=100,
+            confidence=0.62,
+            matches=1,
+            inliers=1,
+            match_method="anchors",
+            map_layer_id="surface",
+        )
+        first = self.tracker.update(anchor, 0.0)
+        second = self.tracker.update(anchor, 0.1)
+        self.assertEqual(first.state, TrackerState.ACQUIRING)
+        self.assertEqual(second.state, TrackerState.TRACKING)
+
     def test_pause_freezes_loss_timeout(self) -> None:
         self.tracker.update(located(100, 100), 0.0)
         self.tracker.update(located(100, 100), 0.1)

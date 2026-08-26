@@ -1,0 +1,77 @@
+{
+  "map_path": "datasets/local/references/hoyolab_sumeru_desert_n1/atlas.png",
+  "pyramid_path": "datasets/local/references/hoyolab_sumeru_desert_n1/surface_pyramid.json",
+  "debug_map_path": "datasets/local/references/hoyolab_sumeru_desert_n1/atlas.png",
+  "roi": {"left": 57, "top": 19, "width": 216, "height": 216},
+  "interval_seconds": 0.1,
+  "matcher": {
+    "max_features": 80000,
+    "ratio_threshold": 0.72,
+    "min_matches": 12,
+    "min_inliers": 8,
+    "min_scale": 0.2,
+    "max_scale": 5.0
+  },
+  "tracker": {
+    "min_confidence": 0.35,
+    "min_inliers": 8,
+    "acquire_hits": 2,
+    "relocate_hits": 3,
+    "candidate_radius_px": 18.0,
+    "max_speed_px_per_second": 90.0,
+    "jump_margin_px": 12.0,
+    "smoothing_alpha": 0.4,
+    "lost_timeout_seconds": 1.5
+  },
+  "local_search": {
+    "enabled": true,
+    "radius_px": 80.0,
+    "ratio_threshold": 0.82,
+    "min_matches": 8,
+    "min_inliers": 8
+  },
+  "anchor_localization": {
+    "enabled": true,
+    "catalog_path": "datasets/local/references/sumeru_semantic_anchors/anchors.json",
+    "template_paths": {
+      "statue": "datasets/local/references/sumeru_semantic_anchors/icons/statue.png",
+      "waypoint": "datasets/local/references/sumeru_semantic_anchors/icons/waypoint.png",
+      "domain": "datasets/local/references/sumeru_semantic_anchors/icons/domain.png"
+    },
+    "min_template_score": 0.30,
+    "min_global_anchors": 3,
+    "local_match_radius_px": 45.0,
+    "max_residual_px": 12.0,
+    "default_canonical_scale": 0.83
+  },
+  "failure_recorder": {
+    "enabled": true,
+    "output_dir": "datasets/local/portability/failures",
+    "pre_frames": 8,
+    "post_frames": 8,
+    "cooldown_seconds": 5.0,
+    "record_acquisition_failures": true,
+    "acquisition_timeout_seconds": 2.0
+  },
+  "screen_gate": {
+    "enabled": true,
+    "template_path": "assets/minimap_compass_n.png",
+    "match_threshold": 0.4,
+    "blank_std_threshold": 12.0
+  },
+  "poi": {"enabled": false},
+  "navigation": {"enabled": false},
+  "poi_guidance": {"enabled": false},
+  "data": {
+    "storage_backend": "json",
+    "database_path": "datasets/local/portability/sumeru-unused.db",
+    "backup_dir": "datasets/local/portability/backups",
+    "region_id": "sumeru_desert",
+    "surface_metadata_path": "datasets/local/references/hoyolab_sumeru_desert_n1/metadata.json",
+    "underground_metadata_path": null,
+    "map_id": 2,
+    "area_id": 4,
+    "lang": "ru-ru"
+  },
+  "progress_sync": {"enabled": false}
+}
