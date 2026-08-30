@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.1.1-alpha — 2026-08-30
+
+Alpha performance and distribution hardening patch.
+
+### Changed
+
+- Reuse one minimap SIFT extraction across compatible reference levels.
+- Vectorize local reference feature selection instead of scanning keypoints in Python.
+- Capture and convert only the configured minimap ROI in live modes.
+- Add Windows CI for the verified Python 3.12 environment.
+- Add first-run asset setup, idempotency, failure, and atomic rollback tests.
+- Remove the tracked game-derived compass crop; local development copies stay outside Git.
+
+### Validation
+
+- Surface benchmark mean processing: 53.88 ms → 15.19 ms.
+- Surface benchmark P95 processing: 63.58 ms → 17.98 ms.
+- Fontaine golden gating scenarios remain passing with zero false locks.
+
 ## v0.1.0-alpha — 2026-08-26
 
 First public alpha of Genshin Navigator.

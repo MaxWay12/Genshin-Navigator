@@ -36,4 +36,4 @@ __all__ = [
     "PyramidMatcher",
     "load_pyramid",
 ]
-__version__ = "0.1.0a1"
+__version__ = "0.1.1a1"

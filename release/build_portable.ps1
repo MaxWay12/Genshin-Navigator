@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "v0.1.0-alpha"
+    [string]$Version = "v0.1.1-alpha"
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,7 +56,11 @@ Copy-ReleaseFile "config.sumeru.example.json"
 Copy-ReleaseFile "release/regions.portable.json" "regions.json"
 Copy-ReleaseFile "README.md"
 Copy-ReleaseFile "CHANGELOG.md"
-Copy-ReleaseFile "RELEASE_NOTES_v0.1.0-alpha.md"
+$ReleaseNotes = "RELEASE_NOTES_$Version.md"
+if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $ReleaseNotes))) {
+    throw "Missing release notes: $ReleaseNotes"
+}
+Copy-ReleaseFile $ReleaseNotes
 Copy-ReleaseFile "LICENSE"
 Copy-ReleaseFile "THIRD_PARTY_NOTICES.md"
 Copy-ReleaseFile "release/Start-Fontaine.cmd" "Start-Fontaine.cmd"
