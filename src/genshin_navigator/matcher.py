@@ -61,6 +61,15 @@ class LocateResult:
         return result
 
 
+@dataclass(frozen=True)
+class PreparedMinimapFeatures:
+    """SIFT query features that can be reused across reference levels."""
+
+    keypoints: tuple[cv2.KeyPoint, ...]
+    descriptors: np.ndarray | None
+    max_features: int
+
+
 class MinimapMatcher:
     """Locate a minimap crop on a reference map using local visual features."""
 
@@ -79,6 +88,25 @@ class MinimapMatcher:
         self._map_keypoints, self._map_descriptors = self._detector.detectAndCompute(map_gray, None)
         if self._map_descriptors is None or len(self._map_keypoints) < self.config.min_matches:
             raise ValueError("Reference map does not contain enough visual features")
+        self._map_keypoint_xy = np.asarray(
+            [keypoint.pt for keypoint in self._map_keypoints], dtype=np.float32
+        )
+
+    @property
+    def query_feature_key(self) -> tuple[float, int, float]:
+        """Identify matchers that can share one minimap SIFT extraction."""
+        # nfeatures only truncates the common SIFT result. It is checked
+        # separately by can_reuse_prepared so differently sized reference
+        # levels can still share the same untruncated minimap extraction.
+        return (0.01, 15, 1.6)
+
+    def can_reuse_prepared(self, prepared: PreparedMinimapFeatures) -> bool:
+        if prepared.descriptors is None:
+            return True
+        return (
+            len(prepared.keypoints) < prepared.max_features
+            and len(prepared.keypoints) <= self.config.max_features
+        )
 
     @staticmethod
     def _prepare(image: np.ndarray) -> np.ndarray:
@@ -100,6 +128,23 @@ class MinimapMatcher:
         return mask
 
     def locate(self, minimap: np.ndarray) -> LocateResult:
+        return self.locate_prepared(minimap, self.prepare_minimap(minimap))
+
+    def prepare_minimap(self, minimap: np.ndarray) -> PreparedMinimapFeatures:
+        if minimap is None or minimap.size == 0:
+            return PreparedMinimapFeatures((), None, self.config.max_features)
+        query_gray = self._prepare(minimap)
+        query_mask = self._minimap_mask(query_gray.shape)
+        keypoints, descriptors = self._detector.detectAndCompute(query_gray, query_mask)
+        return PreparedMinimapFeatures(
+            tuple(keypoints), descriptors, self.config.max_features
+        )
+
+    def locate_prepared(
+        self,
+        minimap: np.ndarray,
+        prepared: PreparedMinimapFeatures,
+    ) -> LocateResult:
         return self._locate(
             minimap,
             self._map_keypoints,
@@ -108,6 +153,7 @@ class MinimapMatcher:
             min_matches=self.config.min_matches,
             min_inliers=self.config.min_inliers,
             confidence_inliers=20,
+            prepared=prepared,
         )
 
     def locate_near(
@@ -121,18 +167,37 @@ class MinimapMatcher:
         min_inliers: int,
     ) -> LocateResult:
         """Match against reference features near a previously confirmed position."""
+        return self.locate_near_prepared(
+            minimap,
+            self.prepare_minimap(minimap),
+            center,
+            radius_px,
+            ratio_threshold=ratio_threshold,
+            min_matches=min_matches,
+            min_inliers=min_inliers,
+        )
+
+    def locate_near_prepared(
+        self,
+        minimap: np.ndarray,
+        prepared: PreparedMinimapFeatures,
+        center: tuple[float, float],
+        radius_px: float,
+        *,
+        ratio_threshold: float,
+        min_matches: int,
+        min_inliers: int,
+    ) -> LocateResult:
+        """Match locally while reusing features extracted from this minimap frame."""
         center_x, center_y = center
         radius_squared = radius_px * radius_px
-        indices = [
-            index
-            for index, keypoint in enumerate(self._map_keypoints)
-            if (keypoint.pt[0] - center_x) ** 2 + (keypoint.pt[1] - center_y) ** 2
-            <= radius_squared
-        ]
-        if len(indices) < max(2, min_matches):
+        offsets = self._map_keypoint_xy - np.float32([center_x, center_y])
+        squared_distances = np.einsum("ij,ij->i", offsets, offsets)
+        indices = np.flatnonzero(squared_distances <= radius_squared)
+        if indices.size < max(2, min_matches):
             return LocateResult(found=False, reason="not_enough_local_reference_features")
-        descriptors = self._map_descriptors[np.asarray(indices, dtype=np.int32)]
-        keypoints = [self._map_keypoints[index] for index in indices]
+        descriptors = self._map_descriptors[indices]
+        keypoints = [self._map_keypoints[index] for index in indices.tolist()]
         return self._locate(
             minimap,
             keypoints,
@@ -141,6 +206,7 @@ class MinimapMatcher:
             min_matches=min_matches,
             min_inliers=min_inliers,
             confidence_inliers=12,
+            prepared=prepared,
         )
 
     def _locate(
@@ -153,13 +219,14 @@ class MinimapMatcher:
         min_matches: int,
         min_inliers: int,
         confidence_inliers: int,
+        prepared: PreparedMinimapFeatures | None = None,
     ) -> LocateResult:
         if minimap is None or minimap.size == 0:
             return LocateResult(found=False, reason="minimap_is_empty")
 
-        query_gray = self._prepare(minimap)
-        query_mask = self._minimap_mask(query_gray.shape)
-        query_keypoints, query_descriptors = self._detector.detectAndCompute(query_gray, query_mask)
+        prepared = prepared or self.prepare_minimap(minimap)
+        query_keypoints = prepared.keypoints
+        query_descriptors = prepared.descriptors
         if query_descriptors is None or len(query_keypoints) < min_matches:
             return LocateResult(found=False, reason="not_enough_minimap_features")
 
@@ -247,6 +314,13 @@ class UndergroundMinimapMatcher(MinimapMatcher):
         self._reference_gray = cv2.cvtColor(reference_map, cv2.COLOR_BGR2GRAY)
 
     def locate(self, minimap: np.ndarray) -> LocateResult:
+        return self.locate_prepared(minimap, self.prepare_minimap(minimap))
+
+    def locate_prepared(
+        self,
+        minimap: np.ndarray,
+        prepared: PreparedMinimapFeatures,
+    ) -> LocateResult:
         return self._locate(
             minimap,
             self._map_keypoints,
@@ -255,6 +329,7 @@ class UndergroundMinimapMatcher(MinimapMatcher):
             min_matches=self.config.min_matches,
             min_inliers=self.config.min_inliers,
             confidence_inliers=12,
+            prepared=prepared,
         )
 
     def locate_fallback(self, minimap: np.ndarray) -> LocateResult:

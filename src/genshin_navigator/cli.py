@@ -15,7 +15,7 @@ from .calibration import CalibrationSession
 from .application import LiveApplication, build_locator, load_runtime_data
 from .benchmark_suite import run_benchmark_suite, write_report_atomic
 from .benchmark_compare import compare_benchmark_suites
-from .capture import crop_roi, grab_screen, load_image, save_screen
+from .capture import crop_roi, grab_roi, grab_screen, load_image, save_screen
 from .config import AppConfig, load_config
 from .data_store import (
     DataBundle,
@@ -356,8 +356,11 @@ def _build_matcher(config: AppConfig) -> Locator:
 
 
 def _locate_once(config: AppConfig, matcher: Locator, screenshot: str | None) -> dict[str, object]:
-    frame = load_image(screenshot) if screenshot else grab_screen()
-    minimap = crop_roi(frame, config.roi)
+    minimap = (
+        crop_roi(load_image(screenshot), config.roi)
+        if screenshot
+        else grab_roi(config.roi)
+    )
     timestamp = time.time()
     observation = matcher.locate(minimap)
     result = observation.to_dict()
@@ -417,7 +420,7 @@ def _run_calibration(
     try:
         while True:
             loop_started = time.perf_counter()
-            minimap = crop_roi(grab_screen(), config.roi)
+            minimap = grab_roi(config.roi)
             gate = screen_gate.check(minimap) if screen_gate else None
             if gate is not None and not gate.minimap_present:
                 snapshot = tracker.pause(loop_started, gate.reason or "minimap_not_visible")

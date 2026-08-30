@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from genshin_navigator.matcher import LocateResult
+from genshin_navigator.matcher import LocateResult, MinimapMatcher, PreparedMinimapFeatures
 from genshin_navigator.pyramid import PyramidLevel, PyramidMatcher
 from genshin_navigator.position import CoordinateSpace, MapPosition, PositionState
 
@@ -55,7 +55,66 @@ class MotionStub:
         pass
 
 
+class PreparedStubMatcher(MinimapMatcher):
+    """Minimal MinimapMatcher-shaped stub for query reuse characterization."""
+
+    def __init__(self, result: LocateResult, *, max_features: int = 100):
+        self.result = result
+        self.reference_map = np.zeros((100, 100, 3), dtype=np.uint8)
+        self.config = type(
+            "PreparedConfig",
+            (),
+            {
+                "max_features": max_features,
+                "ratio_threshold": 0.8,
+                "min_matches": 8,
+                "min_inliers": 8,
+            },
+        )()
+        self.prepare_calls = 0
+
+    def prepare_minimap(self, minimap):
+        self.prepare_calls += 1
+        return PreparedMinimapFeatures((), None, self.config.max_features)
+
+    def locate_prepared(self, minimap, prepared):
+        return self.result
+
+    def locate_near_prepared(self, minimap, prepared, center, radius_px, **kwargs):
+        return self.result
+
+
 class PyramidMatcherTests(unittest.TestCase):
+    def test_reuses_one_minimap_feature_extraction_across_levels(self) -> None:
+        first = PreparedStubMatcher(
+            LocateResult(found=False, matches=3, reason="no_match"),
+            max_features=200,
+        )
+        second = PreparedStubMatcher(
+            LocateResult(
+                found=True,
+                x_px=20,
+                y_px=30,
+                confidence=0.9,
+                matches=20,
+                inliers=18,
+            ),
+            max_features=100,
+        )
+        matcher = PyramidMatcher(
+            (100, 100),
+            [
+                PyramidLevel("first", first, np.eye(3)),
+                PyramidLevel("second", second, np.eye(3)),
+            ],
+        )
+
+        result = matcher.locate(np.zeros((20, 20, 3), dtype=np.uint8))
+
+        self.assertTrue(result.found)
+        self.assertEqual(first.prepare_calls, 1)
+        self.assertEqual(second.prepare_calls, 0)
+
     def test_surface_label_uses_matcher_region(self) -> None:
         level = PyramidLevel(
             id="sumeru_desert_surface_n1",

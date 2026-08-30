@@ -15,6 +15,19 @@ def grab_screen() -> np.ndarray:
     return cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
 
 
+def grab_roi(roi: Roi) -> np.ndarray:
+    """Capture only the minimap rectangle instead of converting the full desktop."""
+    bbox = (roi.left, roi.top, roi.left + roi.width, roi.top + roi.height)
+    image = ImageGrab.grab(bbox=bbox, all_screens=True)
+    frame = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+    if frame.shape[:2] != (roi.height, roi.width):
+        raise ValueError(
+            f"Captured ROI has unexpected size {frame.shape[1]}x{frame.shape[0]} "
+            f"instead of {roi.width}x{roi.height}"
+        )
+    return frame
+
+
 def load_image(path: str | Path) -> np.ndarray:
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
@@ -41,4 +54,3 @@ def save_screen(path: str | Path) -> Path:
     if not cv2.imwrite(str(output), frame):
         raise OSError(f"Could not write screenshot: {output}")
     return output.resolve()
-

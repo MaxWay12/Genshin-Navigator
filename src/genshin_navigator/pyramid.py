@@ -13,7 +13,13 @@ from .anchor_localization import AnchorLocalizer
 from .capture import load_image
 from .config import LocalSearchConfig, MatcherConfig
 from .edge_correlation import EdgeCorrelationLocalizer
-from .matcher import CandidateMatch, LocateResult, MinimapMatcher, UndergroundMinimapMatcher
+from .matcher import (
+    CandidateMatch,
+    LocateResult,
+    MinimapMatcher,
+    PreparedMinimapFeatures,
+    UndergroundMinimapMatcher,
+)
 from .motion_localization import RelativeMotionLocalizer
 from .position import CoordinateSpace, MapPosition
 
@@ -238,8 +244,17 @@ class PyramidMatcher:
         candidates: list[LocateResult] = []
         failures: list[LocateResult] = []
         attempts: list[tuple[PyramidLevel, LocateResult]] = []
+        prepared_queries: dict[tuple[float, int, float], PreparedMinimapFeatures] = {}
         for level in self.levels:
-            local_result = level.matcher.locate(minimap)
+            if isinstance(level.matcher, MinimapMatcher):
+                key = level.matcher.query_feature_key
+                prepared = prepared_queries.get(key)
+                if prepared is None or not level.matcher.can_reuse_prepared(prepared):
+                    prepared = level.matcher.prepare_minimap(minimap)
+                    prepared_queries[key] = prepared
+                local_result = level.matcher.locate_prepared(minimap, prepared)
+            else:
+                local_result = level.matcher.locate(minimap)
             attempts.append((level, local_result))
             if local_result.found:
                 canonical_result = self._to_position(local_result, level)
@@ -320,6 +335,7 @@ class PyramidMatcher:
         candidates: list[LocateResult] = []
         failures: list[LocateResult] = []
         fallback_levels: list[PyramidLevel] = []
+        prepared_queries: dict[tuple[float, int, float], PreparedMinimapFeatures] = {}
         for level in self.levels:
             if level.map_layer_id != map_layer_id or not hasattr(level.matcher, "locate_near"):
                 continue
@@ -347,14 +363,30 @@ class PyramidMatcher:
             map_height, map_width = level.matcher.reference_map.shape[:2]
             if not (0 <= local_x < map_width and 0 <= local_y < map_height):
                 continue
-            local_result = level.matcher.locate_near(  # type: ignore[attr-defined]
-                minimap,
-                (local_x, local_y),
-                local_radius,
-                ratio_threshold=config.ratio_threshold,
-                min_matches=config.min_matches,
-                min_inliers=config.min_inliers,
-            )
+            if isinstance(level.matcher, MinimapMatcher):
+                key = level.matcher.query_feature_key
+                prepared = prepared_queries.get(key)
+                if prepared is None or not level.matcher.can_reuse_prepared(prepared):
+                    prepared = level.matcher.prepare_minimap(minimap)
+                    prepared_queries[key] = prepared
+                local_result = level.matcher.locate_near_prepared(
+                    minimap,
+                    prepared,
+                    (local_x, local_y),
+                    local_radius,
+                    ratio_threshold=config.ratio_threshold,
+                    min_matches=config.min_matches,
+                    min_inliers=config.min_inliers,
+                )
+            else:
+                local_result = level.matcher.locate_near(  # type: ignore[attr-defined]
+                    minimap,
+                    (local_x, local_y),
+                    local_radius,
+                    ratio_threshold=config.ratio_threshold,
+                    min_matches=config.min_matches,
+                    min_inliers=config.min_inliers,
+                )
             if local_result.found:
                 canonical_result = self._to_position(local_result, level)
                 if canonical_result.found and hypot(

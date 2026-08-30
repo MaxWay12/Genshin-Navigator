@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .anchor_localization import AnchorLocalizer
 from .calibration import load_calibration
-from .capture import crop_roi, grab_screen, load_image
+from .capture import grab_roi, load_image
 from .config import AppConfig
 from .data_store import DataBundle, open_data_bundle
 from .debug_view import DebugMapView
@@ -219,7 +219,7 @@ class LiveApplication:
         try:
             while True:
                 started = time.perf_counter()
-                minimap = crop_roi(grab_screen(), config.roi)
+                minimap = grab_roi(config.roi)
                 gate_result = gate.check(minimap) if gate else None
                 if gate_result is not None and not gate_result.minimap_present:
                     if isinstance(locator, PyramidMatcher):
@@ -288,7 +288,7 @@ class LiveApplication:
         last_timestamp = started_at
         while last_timestamp - started_at < duration_seconds:
             loop_started = time.perf_counter()
-            minimap = crop_roi(grab_screen(), config.roi)
+            minimap = grab_roi(config.roi)
             gate_result = gate.check(minimap) if gate else None
             last_timestamp = time.perf_counter()
             if gate_result is not None and not gate_result.minimap_present:

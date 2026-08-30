@@ -47,7 +47,28 @@ class MinimapMatcherTests(unittest.TestCase):
         self.assertFalse(result.found)
         self.assertEqual(result.reason, "not_enough_minimap_features")
 
+    def test_prepared_features_preserve_local_search_result(self) -> None:
+        rng = np.random.default_rng(11)
+        reference = rng.integers(0, 256, (500, 500, 3), dtype=np.uint8)
+        matcher = MinimapMatcher(
+            reference,
+            MatcherConfig(min_matches=8, min_inliers=6, ratio_threshold=0.82),
+        )
+        minimap = reference[140:360, 140:360].copy()
+        kwargs = {
+            "ratio_threshold": 0.82,
+            "min_matches": 8,
+            "min_inliers": 6,
+        }
+
+        regular = matcher.locate_near(minimap, (250, 250), 150, **kwargs)
+        prepared = matcher.prepare_minimap(minimap)
+        reused = matcher.locate_near_prepared(
+            minimap, prepared, (250, 250), 150, **kwargs
+        )
+
+        self.assertEqual(regular.to_dict(), reused.to_dict())
+
 
 if __name__ == "__main__":
     unittest.main()
-
