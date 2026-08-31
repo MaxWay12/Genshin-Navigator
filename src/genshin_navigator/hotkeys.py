@@ -45,10 +45,27 @@ DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {
     HotkeyAction.BLACKLIST_TARGET: 0x6D,  # VK_SUBTRACT
 }
 
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
+MOD_WIN = 0x0008
+
+
+@dataclass(frozen=True)
+class HotkeyBinding:
+    virtual_key: int
+    modifiers: int = 0
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.virtual_key <= 0xFE:
+            raise ValueError("Hotkey virtual key must be a Windows virtual-key code")
+        if self.modifiers & ~(MOD_ALT | MOD_CONTROL | MOD_SHIFT | MOD_WIN):
+            raise ValueError("Unsupported hotkey modifier mask")
+
 
 class HotkeyApi(Protocol):
     def current_thread_id(self) -> int: ...
-    def register(self, hotkey_id: int, virtual_key: int) -> bool: ...
+    def register(self, hotkey_id: int, virtual_key: int, modifiers: int = 0) -> bool: ...
     def unregister(self, hotkey_id: int) -> None: ...
     def get_message(self) -> int | None: ...
     def post_quit(self, thread_id: int) -> None: ...
@@ -62,10 +79,10 @@ class WindowsHotkeyApi:
     def current_thread_id(self) -> int:
         return int(ctypes.windll.kernel32.GetCurrentThreadId())
 
-    def register(self, hotkey_id: int, virtual_key: int) -> bool:
+    def register(self, hotkey_id: int, virtual_key: int, modifiers: int = 0) -> bool:
         return bool(
             ctypes.windll.user32.RegisterHotKey(
-                None, hotkey_id, self.MOD_NOREPEAT, virtual_key
+                None, hotkey_id, modifiers | self.MOD_NOREPEAT, virtual_key
             )
         )
 
@@ -94,12 +111,19 @@ class GlobalHotkeyManager:
 
     def __init__(
         self,
-        hotkeys: dict[HotkeyAction, int] | None = None,
+        hotkeys: dict[
+            HotkeyAction,
+            int | HotkeyBinding | tuple[HotkeyBinding, ...] | list[HotkeyBinding],
+        ] | None = None,
         *,
         api: HotkeyApi | None = None,
         physical_key_state: Callable[[int], int] | None = None,
     ):
-        self.hotkeys = dict(hotkeys or DEFAULT_HOTKEYS)
+        raw_hotkeys = dict(hotkeys or DEFAULT_HOTKEYS)
+        self.hotkeys = {
+            action: self._normalize_bindings(value)
+            for action, value in raw_hotkeys.items()
+        }
         self._api = api or WindowsHotkeyApi()
         self._actions: queue.SimpleQueue[tuple[HotkeyAction, float]] = queue.SimpleQueue()
         self._ready = threading.Event()
@@ -107,15 +131,54 @@ class GlobalHotkeyManager:
         self._physical_thread: threading.Thread | None = None
         self._thread_id: int | None = None
         self._stop_physical = threading.Event()
+        flattened = [
+            (action, binding)
+            for action, bindings in self.hotkeys.items()
+            for binding in bindings
+        ]
         self._ids = {
-            index + 1: action for index, action in enumerate(self.hotkeys)
+            index + 1: (action, binding)
+            for index, (action, binding) in enumerate(flattened)
         }
         self.registration_errors: dict[HotkeyAction, int] = {}
         self._physical_key_state = physical_key_state or (
             lambda virtual_key: ctypes.windll.user32.GetAsyncKeyState(virtual_key)
         )
-        self._physical_was_down = {action: False for action in self.hotkeys}
+        self._physical_was_down = {
+            (action, index): False
+            for action, bindings in self.hotkeys.items()
+            for index, _binding in enumerate(bindings)
+        }
         self._last_delivered: dict[HotkeyAction, float] = {}
+
+    @staticmethod
+    def _normalize_bindings(value) -> tuple[HotkeyBinding, ...]:
+        if isinstance(value, int):
+            return (HotkeyBinding(value),)
+        if isinstance(value, HotkeyBinding):
+            return (value,)
+        bindings = tuple(value)
+        if not bindings or any(not isinstance(item, HotkeyBinding) for item in bindings):
+            raise ValueError("Each hotkey action needs at least one HotkeyBinding")
+        return bindings
+
+    def _binding_down(self, binding: HotkeyBinding) -> bool:
+        modifier_keys = (
+            (MOD_ALT, 0x12),
+            (MOD_CONTROL, 0x11),
+            (MOD_SHIFT, 0x10),
+            (MOD_WIN, 0x5B),
+        )
+        if not bool(self._physical_key_state(binding.virtual_key) & 0x8000):
+            return False
+        return all(
+            not binding.modifiers & mask
+            or bool(self._physical_key_state(virtual_key) & 0x8000)
+            for mask, virtual_key in modifier_keys
+        )
+
+    def is_action_down(self, action: HotkeyAction) -> bool:
+        return any(self._binding_down(binding) for binding in self.hotkeys.get(action, ()))
 
     def start(self, timeout: float = 2.0) -> None:
         if self._thread is not None:
@@ -138,30 +201,42 @@ class GlobalHotkeyManager:
         """Sample key edges independently from the potentially slow CV loop."""
         while not self._stop_physical.is_set():
             now = monotonic()
-            for action, virtual_key in self.hotkeys.items():
-                is_down = bool(self._physical_key_state(virtual_key) & 0x8000)
-                if is_down and not self._physical_was_down[action]:
-                    self._actions.put((action, now))
-                self._physical_was_down[action] = is_down
+            for action, bindings in self.hotkeys.items():
+                for index, binding in enumerate(bindings):
+                    key = (action, index)
+                    is_down = self._binding_down(binding)
+                    if is_down and not self._physical_was_down[key]:
+                        self._actions.put((action, now))
+                    self._physical_was_down[key] = is_down
             time.sleep(0.01)
 
     def _run(self) -> None:
         self._thread_id = self._api.current_thread_id()
         registered: list[int] = []
         try:
-            for hotkey_id, action in self._ids.items():
-                virtual_key = self.hotkeys[action]
-                if self._api.register(hotkey_id, virtual_key):
+            successful_actions: set[HotkeyAction] = set()
+            failed: dict[HotkeyAction, int] = {}
+            for hotkey_id, (action, binding) in self._ids.items():
+                if self._api.register(
+                    hotkey_id, binding.virtual_key, binding.modifiers
+                ):
                     registered.append(hotkey_id)
+                    successful_actions.add(action)
                 else:
-                    self.registration_errors[action] = virtual_key
+                    failed[action] = binding.virtual_key
+            self.registration_errors = {
+                action: virtual_key
+                for action, virtual_key in failed.items()
+                if action not in successful_actions
+            }
             self._ready.set()
             while True:
                 hotkey_id = self._api.get_message()
                 if hotkey_id is None:
                     break
-                action = self._ids.get(hotkey_id)
-                if action is not None:
+                entry = self._ids.get(hotkey_id)
+                if entry is not None:
+                    action, _binding = entry
                     self._actions.put((action, monotonic()))
         finally:
             for hotkey_id in registered:

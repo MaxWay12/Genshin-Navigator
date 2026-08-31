@@ -101,6 +101,27 @@
       "toggle_pause": 106,
       "cycle_target_filter": 111,
       "blacklist_target": 109
+    },
+    "alternative_hotkeys": {
+      "enabled": true,
+      "modifiers": 3,
+      "bindings": {
+        "previous": 37,
+        "next": 39,
+        "skip": 40,
+        "collected_hold": 32,
+        "undo": 38,
+        "toggle_view": 77,
+        "toggle_lock": 76,
+        "quit": 81,
+        "report_issue": 82,
+        "toggle_pause": 80,
+        "cycle_target_filter": 70,
+        "blacklist_target": 66,
+        "toggle_details": 72,
+        "previous_page": 33,
+        "next_page": 34
+      }
     }
   },
   "poi_guidance": {

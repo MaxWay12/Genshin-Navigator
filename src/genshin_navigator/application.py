@@ -19,7 +19,7 @@ from .data_store import DataBundle, open_data_bundle
 from .debug_view import DebugMapView
 from .edge_correlation import EdgeCorrelationLocalizer
 from .failure_recorder import DiagnosticContext, FailureRecorder
-from .hotkeys import HotkeyAction
+from .hotkeys import HotkeyAction, HotkeyBinding
 from .matcher import LocateResult, MinimapMatcher
 from .motion_localization import RelativeMotionLocalizer
 from .storage_schema import SCHEMA_VERSION
@@ -140,7 +140,7 @@ class LiveApplication:
                 negative_after=timedelta(hours=config.poi_guidance.negative_cache_hours),
                 max_cache_bytes=round(config.poi_guidance.max_cache_mb * 1024 * 1024),
             )
-        hotkeys = {
+        primary_hotkeys = {
             HotkeyAction.PREVIOUS: config.navigation.hotkeys.previous,
             HotkeyAction.NEXT: config.navigation.hotkeys.next,
             HotkeyAction.SKIP: config.navigation.hotkeys.skip,
@@ -155,11 +155,23 @@ class LiveApplication:
             HotkeyAction.BLACKLIST_TARGET: config.navigation.hotkeys.blacklist_target,
         }
         if config.poi_guidance.enabled:
-            hotkeys.update({
+            primary_hotkeys.update({
                 HotkeyAction.TOGGLE_DETAILS: config.poi_guidance.toggle_details,
                 HotkeyAction.PREVIOUS_PAGE: config.poi_guidance.previous_page,
                 HotkeyAction.NEXT_PAGE: config.poi_guidance.next_page,
             })
+        hotkeys: dict[HotkeyAction, list[HotkeyBinding]] = {
+            action: [HotkeyBinding(virtual_key)]
+            for action, virtual_key in primary_hotkeys.items()
+        }
+        alternative = config.navigation.alternative_hotkeys
+        if alternative.enabled:
+            for action_name, virtual_key in alternative.bindings.items():
+                action = HotkeyAction(action_name)
+                if action in hotkeys:
+                    hotkeys[action].append(
+                        HotkeyBinding(virtual_key, alternative.modifiers)
+                    )
         return DebugMapView(
             load_image(config.debug_map_path),
             layer_maps,

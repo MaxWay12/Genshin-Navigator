@@ -1,7 +1,7 @@
 """Genshin Navigator: passive minimap position estimation."""
 
 from .matcher import LocateResult, MinimapMatcher
-from .hotkeys import GlobalHotkeyManager, HotkeyAction
+from .hotkeys import GlobalHotkeyManager, HotkeyAction, HotkeyBinding
 from .hud import HudPresentation
 from .position import CoordinateSpace, MapPosition, PositionState
 from .poi import (
@@ -18,6 +18,7 @@ __all__ = [
     "CoordinateSpace",
     "GlobalHotkeyManager",
     "HotkeyAction",
+    "HotkeyBinding",
     "HudPresentation",
     "LocateResult",
     "MapPosition",

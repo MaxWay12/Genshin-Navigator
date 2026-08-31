@@ -12,7 +12,12 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .hotkeys import CollectedHoldController, GlobalHotkeyManager, HotkeyAction
+from .hotkeys import (
+    CollectedHoldController,
+    GlobalHotkeyManager,
+    HotkeyAction,
+    HotkeyBinding,
+)
 from .hud import HudStateStore, WindowGeometry, build_hud_presentation
 from .navigation import NavigationController, NavigationSnapshot
 from .poi import PointOfInterest, PoiRepository, ProgressRepository
@@ -64,7 +69,9 @@ class DebugMapView:
         hud_state_path: str | Path = "datasets/local/ui/hud_state.json",
         collected_hold_seconds: float = 1.0,
         global_hotkeys: bool = True,
-        hotkey_virtual_keys: dict[HotkeyAction, int] | None = None,
+        hotkey_virtual_keys: dict[
+            HotkeyAction, int | HotkeyBinding | list[HotkeyBinding]
+        ] | None = None,
         hotkey_manager: GlobalHotkeyManager | None = None,
         hint_service: PoiHintService | None = None,
         details_width: int | None = None,
@@ -143,7 +150,7 @@ class DebugMapView:
                 self._show_toast(f"Конфликт клавиш: {keys}", 6.0)
         self._tray.start()
         if self._tray.error:
-            self._show_toast("Tray недоступен — Num9 всё ещё закрывает Navigator", 5.0)
+            self._show_toast("Tray недоступен — Num9 или Ctrl+Alt+Q закроет Navigator", 5.0)
         try:
             if not bool(ctypes.windll.shell32.IsUserAnAdmin()):
                 self._show_toast("Если Genshin запущен администратором, запустите Navigator так же", 7.0)
@@ -207,7 +214,7 @@ class DebugMapView:
 
     def _toggle_lock(self) -> None:
         if self._mode != "hud":
-            self._show_toast("Переключитесь в HUD через Num0")
+            self._show_toast("Переключитесь в HUD через Num0 или Ctrl+Alt+M")
             return
         if self._locked:
             self._set_locked_style(False)
@@ -318,7 +325,7 @@ class DebugMapView:
         if action is HotkeyAction.COLLECTED_HOLD:
             target_id = navigation.target.id if navigation and navigation.target else None
             if self._hold.begin(target_id, available=bool(navigation and navigation.available)):
-                self._show_toast("Удерживайте Num5…", 1.2)
+                self._show_toast("Удерживайте Num5 или Ctrl+Alt+Space…", 1.2)
             else:
                 self._show_toast("Нет подтверждённой цели")
             return
@@ -347,7 +354,11 @@ class DebugMapView:
 
     def _update_hold(self, navigation: NavigationSnapshot | None) -> None:
         target_id = navigation.target.id if navigation and navigation.target else None
-        key_down = bool(ctypes.windll.user32.GetAsyncKeyState(self.VK_NUMPAD5) & 0x8000)
+        key_down = (
+            self._hotkeys.is_action_down(HotkeyAction.COLLECTED_HOLD)
+            if self._hotkeys is not None
+            else bool(ctypes.windll.user32.GetAsyncKeyState(self.VK_NUMPAD5) & 0x8000)
+        )
         status = self._hold.update(
             key_down=key_down, target_id=target_id,
             available=bool(navigation and navigation.available),
@@ -448,7 +459,7 @@ class DebugMapView:
             processing = "—" if performance.processing_ms is None else f"{performance.processing_ms:.0f}ms"
             perf_text = f"CV {processing} · {performance.cv_fps:.1f} fps · {performance.search_mode} · {performance.mode}"
             self._put_unicode_text(panel, perf_text, (16, 141), (130, 185, 220))
-        self._put_unicode_text(panel, "4/6 цель · 7 подсказка · 5 собрать · * пауза · 9 выход", (16, self.hud_height - 21), (145, 150, 155))
+        self._put_unicode_text(panel, "4/6 или Ctrl+Alt+←/→ · 5/Space собрать · 9/Q выход", (16, self.hud_height - 21), (145, 150, 155))
         if presentation.bearing_degrees is not None:
             self._draw_hud_arrow(panel, presentation.bearing_degrees, accent)
         if self._hold_progress > 0:
@@ -555,7 +566,7 @@ class DebugMapView:
             self._put_unicode_text(
                 panel, line, (text_x, text_y + index * 22), (220, 222, 224)
             )
-        footer = f"Num1/3 страница {self._details_page + 1}/{pages}  Num7 закрыть  Num4/6 цель  Num9 выход"
+        footer = f"Num1/3 или Ctrl+Alt+PgUp/PgDn · стр. {self._details_page + 1}/{pages} · Num7/H закрыть"
         self._put_unicode_text(panel, footer, (16, self.details_height - 25), (145, 150, 155))
         if time.monotonic() < self._toast_until:
             cv2.rectangle(panel, (7, self.details_height - 62), (self.details_width - 7, self.details_height - 34), (42, 45, 50), -1)
@@ -607,7 +618,7 @@ class DebugMapView:
 
     @staticmethod
     def _navigation_text(navigation: NavigationSnapshot | None, layer_poi_count: int) -> tuple[str, str]:
-        controls = "Num4/6 prev/next  Num2 skip  hold Num5 collected  Num8 undo  Num0 HUD/map  Num9 quit"
+        controls = "NumPad or Ctrl+Alt: Left/Right target  Down skip  hold Space collected  Up undo  M HUD  Q quit"
         if navigation is None or navigation.target is None:
             return f"target=-  visible_pois={layer_poi_count}", controls
         distance = "frozen" if not navigation.available else "uncalibrated" if navigation.distance_m is None else f"≈{navigation.distance_m:.0f} м"

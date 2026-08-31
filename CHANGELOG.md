@@ -11,6 +11,7 @@ Alpha performance and distribution hardening patch.
 - Capture and convert only the configured minimap ROI in live modes.
 - Add quality, balanced, and low-CPU scheduling with global-search backoff.
 - Add pause/resume, live CV metrics, and notification-area controls.
+- Add complete Ctrl+Alt keyboard controls for laptops and keyboards without NumPad.
 - Add target-kind filters, persistent blacklist, and regional progress summary.
 - Add privacy-safe minimap ROI selection and first-run readiness checks.
 - Add Windows CI for the verified Python 3.12 environment.

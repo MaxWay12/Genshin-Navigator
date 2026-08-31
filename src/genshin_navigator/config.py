@@ -245,6 +245,49 @@ class HotkeyConfig:
             raise ValueError("navigation.hotkeys values must be unique")
 
 
+def _default_alternative_hotkeys() -> dict[str, int]:
+    return {
+        "previous": 0x25,  # Left
+        "next": 0x27,  # Right
+        "skip": 0x28,  # Down
+        "collected_hold": 0x20,  # Space
+        "undo": 0x26,  # Up
+        "toggle_view": 0x4D,  # M
+        "toggle_lock": 0x4C,  # L
+        "quit": 0x51,  # Q
+        "report_issue": 0x52,  # R
+        "toggle_pause": 0x50,  # P
+        "cycle_target_filter": 0x46,  # F
+        "blacklist_target": 0x42,  # B
+        "toggle_details": 0x48,  # H
+        "previous_page": 0x21,  # PageUp
+        "next_page": 0x22,  # PageDown
+    }
+
+
+_ALTERNATIVE_HOTKEY_ACTIONS = frozenset(_default_alternative_hotkeys())
+
+
+@dataclass(frozen=True)
+class AlternativeHotkeyConfig:
+    enabled: bool = True
+    modifiers: int = 0x0003  # Ctrl + Alt
+    bindings: dict[str, int] = field(default_factory=_default_alternative_hotkeys)
+
+    def __post_init__(self) -> None:
+        if self.modifiers < 1 or self.modifiers > 0x000F:
+            raise ValueError("navigation.alternative_hotkeys.modifiers is invalid")
+        if any(not 1 <= int(value) <= 0xFE for value in self.bindings.values()):
+            raise ValueError("alternative hotkeys must be Windows virtual-key codes")
+        if len(set(self.bindings.values())) != len(self.bindings):
+            raise ValueError("alternative hotkey virtual keys must be unique")
+        unknown = set(self.bindings) - _ALTERNATIVE_HOTKEY_ACTIONS
+        if unknown:
+            raise ValueError(
+                "unknown alternative hotkey actions: " + ", ".join(sorted(unknown))
+            )
+
+
 @dataclass(frozen=True)
 class NavigationConfig:
     enabled: bool = True
@@ -259,6 +302,9 @@ class NavigationConfig:
     tray_enabled: bool = True
     max_target_distance_m: float | None = None
     hotkeys: HotkeyConfig = field(default_factory=HotkeyConfig)
+    alternative_hotkeys: AlternativeHotkeyConfig = field(
+        default_factory=AlternativeHotkeyConfig
+    )
 
     def __post_init__(self) -> None:
         if self.default_view not in {"hud", "map"}:
@@ -478,6 +524,12 @@ def load_config(path: str | Path) -> AppConfig:
 
     navigation_raw = dict(raw.get("navigation", {}))
     hotkeys_raw = dict(navigation_raw.pop("hotkeys", {}))
+    alternative_hotkeys_raw = dict(
+        navigation_raw.pop("alternative_hotkeys", {})
+    )
+    alternative_bindings = dict(
+        alternative_hotkeys_raw.pop("bindings", _default_alternative_hotkeys())
+    )
     calibration_value = navigation_raw.pop(
         "calibration_path", "datasets/local/calibration/fontaine.json"
     )
@@ -573,6 +625,10 @@ def load_config(path: str | Path) -> AppConfig:
             hud_state_path=hud_state_path,
             navigation_state_path=navigation_state_path,
             hotkeys=HotkeyConfig(**hotkeys_raw),
+            alternative_hotkeys=AlternativeHotkeyConfig(
+                bindings={str(key): int(value) for key, value in alternative_bindings.items()},
+                **alternative_hotkeys_raw,
+            ),
             **navigation_raw,
         ),
         poi_guidance=PoiGuidanceConfig(

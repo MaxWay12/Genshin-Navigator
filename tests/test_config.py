@@ -3,6 +3,7 @@ import unittest
 
 from genshin_navigator.config import (
     AppConfig,
+    AlternativeHotkeyConfig,
     NavigationConfig,
     PerformanceConfig,
     PoiGuidanceConfig,
@@ -28,6 +29,10 @@ class ConfigTests(unittest.TestCase):
                 global_search_interval_seconds=0.8,
                 global_search_max_interval_seconds=0.5,
             )
+
+    def test_alternative_hotkey_names_are_validated(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown alternative"):
+            AlternativeHotkeyConfig(bindings={"typo": 65})
 
 
 if __name__ == "__main__":
