@@ -233,6 +233,9 @@ class HotkeyConfig:
     toggle_lock: int = 0x6E
     quit: int = 0x69
     report_issue: int = 0x6B
+    toggle_pause: int = 0x6A
+    cycle_target_filter: int = 0x6F
+    blacklist_target: int = 0x6D
 
     def __post_init__(self) -> None:
         values = tuple(self.__dict__.values())
@@ -248,10 +251,13 @@ class NavigationConfig:
     calibration_path: Path = Path("datasets/local/calibration/fontaine.json")
     default_view: str = "hud"
     hud_width: int = 360
-    hud_height: int = 150
+    hud_height: int = 180
     hud_state_path: Path = Path("datasets/local/ui/hud_state.json")
+    navigation_state_path: Path = Path("datasets/local/ui/navigation_state.json")
     collected_hold_seconds: float = 1.0
     global_hotkeys: bool = True
+    tray_enabled: bool = True
+    max_target_distance_m: float | None = None
     hotkeys: HotkeyConfig = field(default_factory=HotkeyConfig)
 
     def __post_init__(self) -> None:
@@ -261,6 +267,8 @@ class NavigationConfig:
             raise ValueError("navigation HUD dimensions are too small")
         if self.collected_hold_seconds <= 0:
             raise ValueError("navigation.collected_hold_seconds must be positive")
+        if self.max_target_distance_m is not None and self.max_target_distance_m <= 0:
+            raise ValueError("navigation.max_target_distance_m must be positive")
 
 
 @dataclass(frozen=True)
@@ -334,6 +342,45 @@ class ProgressSyncConfig:
 
 
 @dataclass(frozen=True)
+class PerformanceConfig:
+    mode: str = "balanced"
+    tracking_interval_seconds: float | None = None
+    global_search_interval_seconds: float | None = None
+    global_search_max_interval_seconds: float = 1.2
+    paused_interval_seconds: float = 0.25
+    opencv_threads: int = 2
+    show_metrics: bool = True
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"quality", "balanced", "low_cpu"}:
+            raise ValueError("performance.mode must be quality, balanced, or low_cpu")
+        intervals = (
+            self.tracking_interval_seconds,
+            self.global_search_interval_seconds,
+        )
+        if any(value is not None and value <= 0 for value in intervals):
+            raise ValueError("performance localization intervals must be positive")
+        if self.global_search_max_interval_seconds < self.global_search_interval:
+            raise ValueError(
+                "performance.global_search_max_interval_seconds must not be below the global interval"
+            )
+        if self.paused_interval_seconds < 0.1:
+            raise ValueError("performance.paused_interval_seconds must be at least 0.1")
+        if not 0 <= self.opencv_threads <= 32:
+            raise ValueError("performance.opencv_threads must be between 0 and 32")
+
+    @property
+    def tracking_interval(self) -> float:
+        defaults = {"quality": 0.10, "balanced": 0.16, "low_cpu": 0.25}
+        return self.tracking_interval_seconds or defaults[self.mode]
+
+    @property
+    def global_search_interval(self) -> float:
+        defaults = {"quality": 0.15, "balanced": 0.35, "low_cpu": 0.60}
+        return self.global_search_interval_seconds or defaults[self.mode]
+
+
+@dataclass(frozen=True)
 class AppConfig:
     map_path: Path | None
     pyramid_path: Path | None
@@ -355,6 +402,7 @@ class AppConfig:
     poi_guidance: PoiGuidanceConfig = field(default_factory=PoiGuidanceConfig)
     data: DataConfig = field(default_factory=DataConfig)
     progress_sync: ProgressSyncConfig = field(default_factory=ProgressSyncConfig)
+    performance: PerformanceConfig = field(default_factory=PerformanceConfig)
 
     def __post_init__(self) -> None:
         if (
@@ -442,6 +490,12 @@ def load_config(path: str | Path) -> AppConfig:
     hud_state_path = Path(hud_state_value)
     if not hud_state_path.is_absolute():
         hud_state_path = (config_path.parent / hud_state_path).resolve()
+    navigation_state_value = navigation_raw.pop(
+        "navigation_state_path", "datasets/local/ui/navigation_state.json"
+    )
+    navigation_state_path = Path(navigation_state_value)
+    if not navigation_state_path.is_absolute():
+        navigation_state_path = (config_path.parent / navigation_state_path).resolve()
 
     guidance_raw = dict(raw.get("poi_guidance", {}))
     guidance_cache_value = guidance_raw.pop(
@@ -517,6 +571,7 @@ def load_config(path: str | Path) -> AppConfig:
         navigation=NavigationConfig(
             calibration_path=calibration_path,
             hud_state_path=hud_state_path,
+            navigation_state_path=navigation_state_path,
             hotkeys=HotkeyConfig(**hotkeys_raw),
             **navigation_raw,
         ),
@@ -538,4 +593,5 @@ def load_config(path: str | Path) -> AppConfig:
             auth_profile_dir=auth_profile_dir,
             **progress_sync_raw,
         ),
+        performance=PerformanceConfig(**raw.get("performance", {})),
     )

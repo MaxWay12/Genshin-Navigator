@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from genshin_navigator.calibration import DistanceCalibration
-from genshin_navigator.navigation import NavigationController
+from genshin_navigator.navigation import NavigationController, NavigationPreferencesStore
 from genshin_navigator.poi import MapSpaceMetric, PoiCatalog, PoiProgress, PointOfInterest
 from genshin_navigator.position import CoordinateSpace, MapPosition, PositionState
 from genshin_navigator.tracker import TrackerSnapshot
@@ -34,8 +34,8 @@ def snapshot(pos: MapPosition | None, *, state: PositionState = PositionState.TR
     )
 
 
-def poi(identifier: str, x: float, *, layer: str = "surface", space: CoordinateSpace = CoordinateSpace.SURFACE_ATLAS) -> PointOfInterest:
-    return PointOfInterest(identifier, "chest", identifier, "fontaine", layer, space, x, 0)
+def poi(identifier: str, x: float, *, layer: str = "surface", space: CoordinateSpace = CoordinateSpace.SURFACE_ATLAS, kind: str = "chest") -> PointOfInterest:
+    return PointOfInterest(identifier, kind, identifier, "fontaine", layer, space, x, 0)
 
 
 class NavigationTests(unittest.TestCase):
@@ -45,6 +45,7 @@ class NavigationTests(unittest.TestCase):
             poi("near", 10),
             poi("middle", 20),
             poi("far", 30),
+            poi("hydro", 5, kind="hydroculus"),
             poi("floor", 1, layer="floor78", space=CoordinateSpace.LAYER_LOCAL),
         ]
         metrics = [
@@ -57,6 +58,7 @@ class NavigationTests(unittest.TestCase):
             self.catalog,
             self.progress,
             target_kinds={"chest"},
+            available_target_kinds={"chest", "hydroculus"},
             calibration=DistanceCalibration("fontaine", 1.5),
         )
         self.surface = position("surface", CoordinateSpace.SURFACE_ATLAS, 0, 0)
@@ -129,6 +131,54 @@ class NavigationTests(unittest.TestCase):
         nav = controller.update(snapshot(self.surface))
         self.assertTrue(nav.available)
         self.assertIsNone(nav.distance_m)
+
+    def test_cycles_target_filter_without_selecting_other_layer(self) -> None:
+        self.controller.update(snapshot(self.surface))
+        label = self.controller.cycle_target_filter()
+        nav = self.controller.update(snapshot(self.surface))
+        self.assertEqual(label, "гидрокулы")
+        self.assertEqual(nav.target.id, "hydro")  # type: ignore[union-attr]
+        self.assertEqual(nav.target.layer_id, "surface")  # type: ignore[union-attr]
+
+    def test_persistent_blacklist_survives_restart_and_undo_removes_it(self) -> None:
+        path = Path(self.temporary.name) / "navigation.json"
+        store = NavigationPreferencesStore(path)
+        controller = NavigationController(
+            self.catalog,
+            self.progress,
+            target_kinds={"chest"},
+            available_target_kinds={"chest", "hydroculus"},
+            preferences_store=store,
+        )
+        controller.update(snapshot(self.surface))
+        controller.blacklist_current()
+        restarted = NavigationController(
+            self.catalog,
+            self.progress,
+            target_kinds={"chest"},
+            available_target_kinds={"chest", "hydroculus"},
+            preferences_store=store,
+        )
+        self.assertEqual(restarted.update(snapshot(self.surface)).target.id, "middle")  # type: ignore[union-attr]
+        controller.undo()
+        restarted_again = NavigationController(
+            self.catalog,
+            self.progress,
+            target_kinds={"chest"},
+            available_target_kinds={"chest", "hydroculus"},
+            preferences_store=store,
+        )
+        self.assertEqual(restarted_again.update(snapshot(self.surface)).target.id, "near")  # type: ignore[union-attr]
+
+    def test_summary_reports_filter_progress_skip_and_blacklist(self) -> None:
+        self.controller.update(snapshot(self.surface))
+        self.controller.skip()
+        self.controller.blacklist_current()
+        summary = self.controller.summary
+        self.assertEqual(summary.total, 4)
+        self.assertEqual(summary.session_skipped, 1)
+        self.assertEqual(summary.blacklisted, 1)
+        self.assertEqual(summary.remaining, 3)
 
 
 if __name__ == "__main__":

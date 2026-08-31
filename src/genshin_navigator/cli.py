@@ -45,7 +45,8 @@ from .progress_backup import ProgressTransferService
 from .scenario import evaluate_scenario, record_scenario
 from .scenario_annotation import annotate_scenario
 from .region_manifest import load_region_manifest
-from .asset_setup import setup_region
+from .asset_setup import region_asset_status, setup_region
+from .roi_setup import check_config_roi, configure_roi
 from . import __version__
 
 
@@ -181,6 +182,22 @@ def _parser() -> argparse.ArgumentParser:
     setup.add_argument("--region", default=None)
     setup.add_argument("--yes", action="store_true")
     setup.add_argument("--force", action="store_true")
+
+    setup_status = subparsers.add_parser(
+        "setup-status", help="Check regional assets and the minimap capture area"
+    )
+    setup_status.add_argument("--config", default="config.json")
+    setup_status.add_argument("--region", default=None)
+
+    roi_check = subparsers.add_parser(
+        "roi-check", help="Check whether the configured minimap area is on screen"
+    )
+    roi_check.add_argument("--config", default="config.json")
+
+    configure_roi_parser = subparsers.add_parser(
+        "configure-roi", help="Select the minimap area without saving a screenshot"
+    )
+    configure_roi_parser.add_argument("--config", default="config.json")
 
     hoyolab_login = subparsers.add_parser(
         "hoyolab-login", help="Sign in to HoYoLAB in an isolated WebView2 window"
@@ -581,6 +598,32 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("track --region requires --regions")
             config_path = load_region_manifest(args.regions).get(args.region).config_path
         config = load_config(config_path)
+        if args.command == "roi-check":
+            report = check_config_roi(config).to_dict()
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["valid"] else 2
+        if args.command == "configure-roi":
+            selected = configure_roi(config_path)
+            if selected is None:
+                print("ROI setup cancelled; config was not changed.")
+                return 2
+            print(json.dumps({
+                "status": "configured",
+                "roi": {
+                    "left": selected.left,
+                    "top": selected.top,
+                    "width": selected.width,
+                    "height": selected.height,
+                },
+            }, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "setup-status":
+            region_id = args.region or config.data.region_id
+            assets = region_asset_status(config, region_id)
+            roi = check_config_roi(config).to_dict()
+            report = {"ready": bool(assets["ready"] and roi["valid"]), "assets": assets, "roi": roi}
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["ready"] else 2
         if args.command == "setup-region":
             region_id = args.region or config.data.region_id
             if not args.yes:
@@ -597,7 +640,12 @@ def main(argv: list[str] | None = None) -> int:
                     print("Regional data setup cancelled; no changes were made.")
                     return 0
             print(json.dumps(
-                setup_region(config, region_id, force=args.force),
+                setup_region(
+                    config,
+                    region_id,
+                    force=args.force,
+                    progress=lambda stage: print(f"[setup] {stage}...", flush=True),
+                ),
                 ensure_ascii=False,
                 indent=2,
             ))

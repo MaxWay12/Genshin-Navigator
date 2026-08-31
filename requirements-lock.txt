@@ -3,3 +3,5 @@ numpy==2.5.2
 opencv-python==4.14.0.94
 Pillow==11.3.0
 pywebview==6.2.1; platform_system == "Windows"
+pystray==0.19.5; platform_system == "Windows"
+six==1.17.0; platform_system == "Windows"

@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.1-alpha — 2026-08-30
+## v0.1.1-alpha — 2026-09-01
 
 Alpha performance and distribution hardening patch.
 
@@ -9,6 +9,10 @@ Alpha performance and distribution hardening patch.
 - Reuse one minimap SIFT extraction across compatible reference levels.
 - Vectorize local reference feature selection instead of scanning keypoints in Python.
 - Capture and convert only the configured minimap ROI in live modes.
+- Add quality, balanced, and low-CPU scheduling with global-search backoff.
+- Add pause/resume, live CV metrics, and notification-area controls.
+- Add target-kind filters, persistent blacklist, and regional progress summary.
+- Add privacy-safe minimap ROI selection and first-run readiness checks.
 - Add Windows CI for the verified Python 3.12 environment.
 - Add first-run asset setup, idempotency, failure, and atomic rollback tests.
 - Remove the tracked game-derived compass crop; local development copies stay outside Git.

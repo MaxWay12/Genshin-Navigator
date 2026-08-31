@@ -119,6 +119,17 @@ class HudPresentationTests(unittest.TestCase):
 
         self.assertTrue(view._quit_requested)
 
+    def test_pause_action_toggles_without_navigation_or_focus(self) -> None:
+        view = object.__new__(DebugMapView)
+        view._paused = False
+        view._hold = CollectedHoldController()
+        view._show_toast = lambda *_args, **_kwargs: None
+
+        view._dispatch_action(HotkeyAction.TOGGLE_PAUSE, None)
+        self.assertTrue(view.paused)
+        view._dispatch_action(HotkeyAction.TOGGLE_PAUSE, None)
+        self.assertFalse(view.paused)
+
     def test_direction_arrow_renders_for_fresh_bearing(self) -> None:
         canvas = np.zeros((150, 360, 3), dtype=np.uint8)
 

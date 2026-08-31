@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import queue
 import textwrap
 import time
 from math import cos, radians, sin
@@ -16,7 +17,9 @@ from .hud import HudStateStore, WindowGeometry, build_hud_presentation
 from .navigation import NavigationController, NavigationSnapshot
 from .poi import PointOfInterest, PoiRepository, ProgressRepository
 from .poi_guidance import HintState, PoiHintService, PoiHintSnapshot
+from .performance import PerformanceSnapshot
 from .tracker import TrackerSnapshot, TrackerState
+from .tray import TrayController
 
 
 class _Rect(ctypes.Structure):
@@ -67,6 +70,9 @@ class DebugMapView:
         details_width: int | None = None,
         details_height: int = 650,
         report_callback: Callable[[], bool] | None = None,
+        progress_status: Callable[[], dict[str, object]] | None = None,
+        tray_enabled: bool = True,
+        tray_controller: TrayController | None = None,
     ):
         if atlas is None or atlas.size == 0:
             raise ValueError("Debug atlas is empty")
@@ -99,7 +105,15 @@ class DebugMapView:
         self._toast = ""
         self._toast_until = 0.0
         self._quit_requested = False
+        self._paused = False
         self._report_callback = report_callback
+        self._progress_status_supplier = progress_status
+        self._progress_status_cache: dict[str, object] = {}
+        self._progress_status_at = 0.0
+        self._external_actions: queue.SimpleQueue[HotkeyAction] = queue.SimpleQueue()
+        self._tray = tray_controller or TrayController(
+            self._external_actions.put, enabled=tray_enabled
+        )
         self._active_layer_id = ""
         self._state_store = HudStateStore(hud_state_path)
         self._hotkeys = hotkey_manager
@@ -127,6 +141,9 @@ class DebugMapView:
             if self._hotkeys.registration_errors:
                 keys = ", ".join(action.value for action in self._hotkeys.registration_errors)
                 self._show_toast(f"Конфликт клавиш: {keys}", 6.0)
+        self._tray.start()
+        if self._tray.error:
+            self._show_toast("Tray недоступен — Num9 всё ещё закрывает Navigator", 5.0)
         try:
             if not bool(ctypes.windll.shell32.IsUserAnAdmin()):
                 self._show_toast("Если Genshin запущен администратором, запустите Navigator так же", 7.0)
@@ -140,6 +157,10 @@ class DebugMapView:
     @property
     def locked(self) -> bool:
         return self._locked
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
 
     def _window_handle(self) -> int:
         return int(ctypes.windll.user32.FindWindowW(None, self.window_name) or 0)
@@ -257,6 +278,18 @@ class DebugMapView:
             self._hold.cancel()
             self._quit_requested = True
             return
+        if action is HotkeyAction.TOGGLE_PAUSE:
+            self._hold.cancel()
+            self._paused = not self._paused
+            self._show_toast("Navigator приостановлен" if self._paused else "Navigator продолжает работу")
+            return
+        if action is HotkeyAction.SHOW_HUD:
+            self._mode = "hud"
+            self._apply_window_mode()
+            handle = self._window_handle()
+            if handle:
+                ctypes.windll.user32.ShowWindow(handle, 5)
+            return
         if action is HotkeyAction.REPORT_ISSUE:
             accepted = self._report_callback() if self._report_callback else False
             self._show_toast(
@@ -299,6 +332,15 @@ class DebugMapView:
         elif action is HotkeyAction.SKIP:
             self._navigation.skip()
             self._show_toast("Цель временно пропущена")
+        elif action is HotkeyAction.CYCLE_TARGET_FILTER:
+            label = self._navigation.cycle_target_filter()
+            self._show_toast(f"Фильтр целей: {label}")
+        elif action is HotkeyAction.BLACKLIST_TARGET:
+            target = self._navigation.current_target
+            self._navigation.blacklist_current()
+            self._show_toast(
+                f"В blacklist: {target.name}" if target else "Нет цели для blacklist"
+            )
         elif action is HotkeyAction.UNDO:
             self._navigation.undo()
             self._show_toast("Последнее действие отменено")
@@ -317,7 +359,13 @@ class DebugMapView:
             self._navigation.mark_collected()
             self._show_toast("Сохранено локально · ожидает sync")
 
-    def show(self, snapshot: TrackerSnapshot, fps: float, paused_reason: str | None = None) -> bool:
+    def show(
+        self,
+        snapshot: TrackerSnapshot,
+        fps: float,
+        paused_reason: str | None = None,
+        performance: PerformanceSnapshot | None = None,
+    ) -> bool:
         layer_id = snapshot.position.layer_id if snapshot.position is not None else snapshot.map_layer_id
         self._select_layer(layer_id)
         navigation = self._navigation.update(snapshot) if self._navigation else None
@@ -332,6 +380,9 @@ class DebugMapView:
             ord("1"): HotkeyAction.PREVIOUS_PAGE,
             ord("3"): HotkeyAction.NEXT_PAGE,
             ord("+"): HotkeyAction.REPORT_ISSUE,
+            ord("*"): HotkeyAction.TOGGLE_PAUSE,
+            ord("/"): HotkeyAction.CYCLE_TARGET_FILTER,
+            ord("-"): HotkeyAction.BLACKLIST_TARGET,
         }
         if key in (ord("m"), ord("M")) and self._navigation is not None:
             self._navigation.mark_collected()
@@ -340,6 +391,11 @@ class DebugMapView:
             self._dispatch_action(local_actions[key], navigation)
         for action in self._hotkeys.poll() if self._hotkeys is not None else []:
             self._dispatch_action(action, navigation)
+        while True:
+            try:
+                self._dispatch_action(self._external_actions.get_nowait(), navigation)
+            except queue.Empty:
+                break
         navigation = self._navigation.update(snapshot) if self._navigation else None
         if self._details_open and self._hint_service is not None:
             target = navigation.target if navigation is not None else None
@@ -352,11 +408,11 @@ class DebugMapView:
         navigation = self._navigation.update(snapshot) if self._navigation else None
         if self._mode == "hud":
             canvas = (
-                self._render_details_hud(snapshot, navigation, paused_reason)
-                if self._details_open else self._render_hud(snapshot, navigation, paused_reason)
+                self._render_details_hud(snapshot, navigation, paused_reason, performance)
+                if self._details_open else self._render_hud(snapshot, navigation, paused_reason, performance)
             )
         else:
-            canvas = self._render_map(snapshot, navigation, fps, paused_reason)
+            canvas = self._render_map(snapshot, navigation, fps, paused_reason, performance)
         cv2.imshow(self.window_name, canvas)
         try:
             visible = cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) >= 1
@@ -364,7 +420,13 @@ class DebugMapView:
             visible = False
         return visible and not self._quit_requested and key not in (27, ord("q"), ord("Q"))
 
-    def _render_hud(self, snapshot: TrackerSnapshot, navigation: NavigationSnapshot | None, paused_reason: str | None) -> np.ndarray:
+    def _render_hud(
+        self,
+        snapshot: TrackerSnapshot,
+        navigation: NavigationSnapshot | None,
+        paused_reason: str | None,
+        performance: PerformanceSnapshot | None = None,
+    ) -> np.ndarray:
         panel = np.full((self.hud_height, self.hud_width, 3), (24, 27, 31), np.uint8)
         presentation = build_hud_presentation(snapshot, navigation, self._layer_labels)
         accent = (85, 220, 110) if presentation.available and not paused_reason else (145, 145, 145)
@@ -373,7 +435,20 @@ class DebugMapView:
         self._put_unicode_text(panel, presentation.distance, (16, 44), accent)
         self._put_unicode_text(panel, presentation.layer[:43], (16, 70), (190, 195, 200))
         self._put_unicode_text(panel, "ПАУЗА" if paused_reason else presentation.state, (16, 96), accent)
-        self._put_unicode_text(panel, "4/6 цель · 7 подсказка · 5 собрать · 0 карта · 9 выход", (16, self.hud_height - 23), (145, 150, 155))
+        navigation_controller = getattr(self, "_navigation", None)
+        if navigation_controller is not None and self.hud_height >= 170:
+            summary = navigation_controller.summary
+            pending = int(self._progress_status().get("pending_sync_count", 0))
+            summary_text = (
+                f"{summary.target_filter}: {summary.collected}/{summary.total} · "
+                f"осталось {summary.remaining} · skip {summary.session_skipped} · sync {pending}"
+            )
+            self._put_unicode_text(panel, summary_text[:55], (16, 119), (175, 180, 185))
+        if performance is not None and self.hud_height >= 170:
+            processing = "—" if performance.processing_ms is None else f"{performance.processing_ms:.0f}ms"
+            perf_text = f"CV {processing} · {performance.cv_fps:.1f} fps · {performance.search_mode} · {performance.mode}"
+            self._put_unicode_text(panel, perf_text, (16, 141), (130, 185, 220))
+        self._put_unicode_text(panel, "4/6 цель · 7 подсказка · 5 собрать · * пауза · 9 выход", (16, self.hud_height - 21), (145, 150, 155))
         if presentation.bearing_degrees is not None:
             self._draw_hud_arrow(panel, presentation.bearing_degrees, accent)
         if self._hold_progress > 0:
@@ -383,6 +458,19 @@ class DebugMapView:
             cv2.rectangle(panel, (7, 91), (self.hud_width - 7, 119), (42, 45, 50), -1)
             self._put_unicode_text(panel, self._toast[:45], (14, 95), (245, 220, 170))
         return panel
+
+    def _progress_status(self) -> dict[str, object]:
+        supplier = getattr(self, "_progress_status_supplier", None)
+        if supplier is None:
+            return {}
+        now = time.monotonic()
+        if now - getattr(self, "_progress_status_at", 0.0) >= 2.0:
+            try:
+                self._progress_status_cache = supplier()
+            except Exception:
+                self._progress_status_cache = {}
+            self._progress_status_at = now
+        return self._progress_status_cache
 
     @staticmethod
     def _hint_lines(hint: PoiHintSnapshot, width: int) -> list[str]:
@@ -407,11 +495,12 @@ class DebugMapView:
         snapshot: TrackerSnapshot,
         navigation: NavigationSnapshot | None,
         paused_reason: str | None,
+        performance: PerformanceSnapshot | None = None,
     ) -> np.ndarray:
         panel = np.full(
             (self.details_height, self.details_width, 3), (24, 27, 31), np.uint8
         )
-        compact = self._render_hud(snapshot, navigation, paused_reason)
+        compact = self._render_hud(snapshot, navigation, paused_reason, performance)
         header_width = min(self.details_width, compact.shape[1])
         header_height = min(self.hud_height, compact.shape[0])
         panel[:header_height, :header_width] = compact[:header_height, :header_width]
@@ -473,7 +562,14 @@ class DebugMapView:
             self._put_unicode_text(panel, self._toast[:65], (14, self.details_height - 58), (245, 220, 170))
         return panel
 
-    def _render_map(self, snapshot: TrackerSnapshot, navigation: NavigationSnapshot | None, fps: float, paused_reason: str | None) -> np.ndarray:
+    def _render_map(
+        self,
+        snapshot: TrackerSnapshot,
+        navigation: NavigationSnapshot | None,
+        fps: float,
+        paused_reason: str | None,
+        performance: PerformanceSnapshot | None = None,
+    ) -> np.ndarray:
         canvas = cv2.copyMakeBorder(self.base, 0, 112, 0, 0, cv2.BORDER_CONSTANT, value=(18, 18, 18))
         colors = {TrackerState.TRACKING: (80, 220, 80), TrackerState.ACQUIRING: (40, 210, 240), TrackerState.RELOCATING: (30, 150, 255), TrackerState.LOST: (60, 60, 230)}
         color = (150, 150, 150) if paused_reason else colors[snapshot.state]
@@ -496,7 +592,8 @@ class DebugMapView:
                 cv2.line(canvas, point, target_point, (255, 235, 180) if navigation and navigation.available else (150, 150, 150), 2, cv2.LINE_AA)
         y = self.base.shape[0]
         state = "PAUSED" if paused_reason else snapshot.state.value
-        cv2.putText(canvas, f"{state}  confidence={snapshot.confidence:.2f}  fps={fps:.1f}", (12, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
+        perf = "" if performance is None else f"  CV={performance.processing_ms or 0:.0f}ms/{performance.search_mode}/{performance.mode}"
+        cv2.putText(canvas, f"{state}  confidence={snapshot.confidence:.2f}  fps={fps:.1f}{perf}", (12, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
         label = self._layer_labels.get(snapshot.map_layer_id or "surface", snapshot.map_layer_id or "surface")
         self._put_unicode_text(canvas, f"Слой: {label}", (12, y + 31), (210, 210, 210))
         target_text, controls = self._navigation_text(navigation, layer_poi_count)
@@ -540,6 +637,7 @@ class DebugMapView:
 
     def close(self) -> None:
         self._hold.cancel()
+        self._tray.close()
         if self._hotkeys is not None:
             self._hotkeys.close()
         if self._locked and self._mode == "hud":

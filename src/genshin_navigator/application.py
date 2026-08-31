@@ -9,6 +9,8 @@ from datetime import timedelta
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+import cv2
+
 from .anchor_localization import AnchorLocalizer
 from .calibration import load_calibration
 from .capture import grab_roi, load_image
@@ -21,7 +23,8 @@ from .hotkeys import HotkeyAction
 from .matcher import LocateResult, MinimapMatcher
 from .motion_localization import RelativeMotionLocalizer
 from .storage_schema import SCHEMA_VERSION
-from .navigation import NavigationController
+from .navigation import NavigationController, NavigationPreferencesStore
+from .performance import LocalizationScheduler, PerformanceMonitor
 from .poi_guidance import HoyoLabPoiHintProvider, PoiHintService, SqlitePoiHintRepository
 from .pyramid import Locator, PyramidMatcher, load_pyramid
 from .screen_gate import MinimapScreenGate
@@ -105,7 +108,14 @@ class LiveApplication:
                 catalog,
                 progress,
                 target_kinds=set(config.poi.target_kinds),
+                available_target_kinds={
+                    poi.kind for poi in catalog.pois if poi.kind in set(config.poi.kinds)
+                },
                 calibration=load_calibration(config.navigation.calibration_path),
+                preferences_store=NavigationPreferencesStore(
+                    config.navigation.navigation_state_path
+                ),
+                max_target_distance_m=config.navigation.max_target_distance_m,
             )
             if catalog is not None and progress is not None and config.navigation.enabled
             else None
@@ -140,6 +150,9 @@ class LiveApplication:
             HotkeyAction.TOGGLE_LOCK: config.navigation.hotkeys.toggle_lock,
             HotkeyAction.QUIT: config.navigation.hotkeys.quit,
             HotkeyAction.REPORT_ISSUE: config.navigation.hotkeys.report_issue,
+            HotkeyAction.TOGGLE_PAUSE: config.navigation.hotkeys.toggle_pause,
+            HotkeyAction.CYCLE_TARGET_FILTER: config.navigation.hotkeys.cycle_target_filter,
+            HotkeyAction.BLACKLIST_TARGET: config.navigation.hotkeys.blacklist_target,
         }
         if config.poi_guidance.enabled:
             hotkeys.update({
@@ -165,6 +178,15 @@ class LiveApplication:
             hotkey_virtual_keys=hotkeys,
             hint_service=hint_service,
             report_callback=report_callback,
+            progress_status=(
+                lambda: data.provider.status(
+                    config.data.region_id,
+                    hint_refresh_after_days=config.poi_guidance.refresh_after_days,
+                )
+                if data is not None and data.provider is not None
+                else {}
+            ),
+            tray_enabled=config.navigation.tray_enabled,
         )
 
     def _diagnostic_context(self, data: DataBundle | None) -> DiagnosticContext:
@@ -205,7 +227,11 @@ class LiveApplication:
 
     def run(self) -> int:
         config, locator = self.config, self.locator
+        if config.performance.opencv_threads:
+            cv2.setNumThreads(config.performance.opencv_threads)
         tracker = LiveTracker(config.tracker)
+        scheduler = LocalizationScheduler(config.performance)
+        performance = PerformanceMonitor(config.performance.mode)
         data = load_runtime_data(config)
         recorder = FailureRecorder(
             config.failure_recorder, self._diagnostic_context(data)
@@ -216,24 +242,75 @@ class LiveApplication:
         )
         view = self._view(data, recorder.request_manual_report)
         previous = time.perf_counter()
+        snapshot = tracker.pause(previous, "starting")
+        was_paused = False
         try:
             while True:
                 started = time.perf_counter()
+                if view.paused:
+                    now = time.perf_counter()
+                    snapshot = tracker.pause(now, "user_paused")
+                    performance.idle("paused")
+                    elapsed = max(now - previous, 1e-6)
+                    previous = now
+                    if not view.show(
+                        snapshot,
+                        1.0 / elapsed,
+                        paused_reason="user_paused",
+                        performance=(performance.snapshot if config.performance.show_metrics else None),
+                    ):
+                        return 0
+                    was_paused = True
+                    self._wait(started, config.performance.paused_interval_seconds)
+                    continue
+                if was_paused:
+                    scheduler.force_next()
+                    was_paused = False
+                now = time.perf_counter()
+                if not scheduler.due(now, tracker.state):
+                    performance.idle("waiting")
+                    elapsed = max(now - previous, 1e-6)
+                    previous = now
+                    if not view.show(
+                        snapshot,
+                        1.0 / elapsed,
+                        performance=(performance.snapshot if config.performance.show_metrics else None),
+                    ):
+                        return 0
+                    self._wait(started)
+                    continue
+                cv_started = time.perf_counter()
                 minimap = grab_roi(config.roi)
                 gate_result = gate.check(minimap) if gate else None
+                scheduler.mark_run(time.perf_counter())
                 if gate_result is not None and not gate_result.minimap_present:
                     if isinstance(locator, PyramidMatcher):
                         locator.reset_continuity()
                     now = time.perf_counter()
                     reason = gate_result.reason or "minimap_not_visible"
                     snapshot = tracker.pause(now, reason)
+                    performance.record(
+                        now,
+                        (time.perf_counter() - cv_started) * 1000.0,
+                        "gate",
+                    )
                     elapsed = max(now - previous, 1e-6)
                     previous = now
-                    if not view.show(snapshot, 1.0 / elapsed, paused_reason=reason):
+                    if not view.show(
+                        snapshot,
+                        1.0 / elapsed,
+                        paused_reason=reason,
+                        performance=(performance.snapshot if config.performance.show_metrics else None),
+                    ):
                         return 0
                     self._wait(started)
                     continue
                 hint = tracker.position_hint
+                search_mode = "local" if (
+                    config.local_search.enabled
+                    and hint is not None
+                    and isinstance(locator, PyramidMatcher)
+                ) else "global"
                 localization = (
                     locator.locate_near(minimap, hint, config.local_search)
                     if config.local_search.enabled
@@ -243,6 +320,12 @@ class LiveApplication:
                 )
                 now = time.perf_counter()
                 snapshot = tracker.update(localization, now)
+                scheduler.observe_result(found=localization.found, state=snapshot.state)
+                performance.record(
+                    now,
+                    (time.perf_counter() - cv_started) * 1000.0,
+                    search_mode,
+                )
                 was_active = recorder.active
                 incident = recorder.observe(minimap, localization, snapshot, now)
                 if recorder.active and not was_active:
@@ -254,7 +337,11 @@ class LiveApplication:
                     )
                 elapsed = max(now - previous, 1e-6)
                 previous = now
-                if not view.show(snapshot, 1.0 / elapsed):
+                if not view.show(
+                    snapshot,
+                    1.0 / elapsed,
+                    performance=(performance.snapshot if config.performance.show_metrics else None),
+                ):
                     return 0
                 self._wait(started)
         finally:
@@ -314,7 +401,7 @@ class LiveApplication:
             raise RuntimeError("No diagnostic frames were recorded")
         return saved
 
-    def _wait(self, started: float) -> None:
-        remaining = self.config.interval_seconds - (time.perf_counter() - started)
+    def _wait(self, started: float, interval: float | None = None) -> None:
+        remaining = (interval or self.config.interval_seconds) - (time.perf_counter() - started)
         if remaining > 0:
             time.sleep(remaining)

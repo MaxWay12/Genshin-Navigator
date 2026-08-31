@@ -4,6 +4,7 @@ import unittest
 from genshin_navigator.config import (
     AppConfig,
     NavigationConfig,
+    PerformanceConfig,
     PoiGuidanceConfig,
     Roi,
 )
@@ -19,6 +20,13 @@ class ConfigTests(unittest.TestCase):
                 roi=Roi(0, 0, 10, 10),
                 navigation=NavigationConfig(),
                 poi_guidance=PoiGuidanceConfig(toggle_details=0x64),
+            )
+
+    def test_global_search_backoff_cap_cannot_be_below_initial_interval(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not be below"):
+            PerformanceConfig(
+                global_search_interval_seconds=0.8,
+                global_search_max_interval_seconds=0.5,
             )
 
 

@@ -65,6 +65,7 @@ Copy-ReleaseFile "LICENSE"
 Copy-ReleaseFile "THIRD_PARTY_NOTICES.md"
 Copy-ReleaseFile "release/Start-Fontaine.cmd" "Start-Fontaine.cmd"
 Copy-ReleaseFile "release/Start-Sumeru-Experimental.cmd" "Start-Sumeru-Experimental.cmd"
+Copy-ReleaseFile "release/Configure-Minimap.cmd" "Configure-Minimap.cmd"
 
 & $Python (Join-Path $ProjectRoot "scripts/collect_licenses.py") --output (Join-Path $Stage "licenses")
 if ($LASTEXITCODE -ne 0) { throw "Third-party license collection failed" }

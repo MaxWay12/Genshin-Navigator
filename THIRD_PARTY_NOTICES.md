@@ -12,6 +12,7 @@ Runtime components include:
 | OpenCV / opencv-python | Computer vision | Apache-2.0 and bundled third-party terms | https://opencv.org/ |
 | Pillow | Image handling | HPND | https://python-pillow.org/ |
 | pywebview | Optional HoYoLAB login window | BSD-3-Clause | https://pywebview.flowrl.com/ |
+| pystray / six | Windows notification-area controls | LGPL-3.0 / MIT | https://github.com/moses-palmer/pystray |
 | pythonnet / clr-loader | WebView .NET bridge | MIT | https://pythonnet.github.io/ |
 | cffi / pycparser | Native interface support | MIT | https://cffi.readthedocs.io/ |
 | bottle / proxy-tools | pywebview runtime support | MIT / BSD-2-Clause | https://bottlepy.org/ |

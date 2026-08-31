@@ -24,6 +24,10 @@ class HotkeyAction(str, Enum):
     PREVIOUS_PAGE = "previous_page"
     NEXT_PAGE = "next_page"
     REPORT_ISSUE = "report_issue"
+    TOGGLE_PAUSE = "toggle_pause"
+    CYCLE_TARGET_FILTER = "cycle_target_filter"
+    BLACKLIST_TARGET = "blacklist_target"
+    SHOW_HUD = "show_hud"
 
 
 DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {
@@ -36,6 +40,9 @@ DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {
     HotkeyAction.TOGGLE_LOCK: 0x6E,  # VK_DECIMAL
     HotkeyAction.QUIT: 0x69,  # VK_NUMPAD9
     HotkeyAction.REPORT_ISSUE: 0x6B,  # VK_ADD
+    HotkeyAction.TOGGLE_PAUSE: 0x6A,  # VK_MULTIPLY
+    HotkeyAction.CYCLE_TARGET_FILTER: 0x6F,  # VK_DIVIDE
+    HotkeyAction.BLACKLIST_TARGET: 0x6D,  # VK_SUBTRACT
 }
 
 

@@ -4,9 +4,12 @@ import json
 import os
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from PIL import Image
 
 from genshin_navigator import asset_setup
 
@@ -138,6 +141,24 @@ class AssetSetupTests(unittest.TestCase):
 
             self.assertEqual(first_destination.read_text(encoding="utf-8"), "old-first")
             self.assertEqual(second_destination.read_text(encoding="utf-8"), "old-second")
+
+    def test_verified_tile_cache_resumes_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "local"
+            first_output = root / ".setup-a" / "references" / "surface"
+            second_output = root / ".setup-b" / "references" / "surface"
+            preset = asset_setup.RegionPreset(
+                "test", 1, range(1, 2), range(2, 3), "surface", "poi.json", "level"
+            )
+            encoded = BytesIO()
+            Image.new("RGB", (256, 256), (20, 30, 40)).save(encoded, format="WEBP")
+            with patch.object(asset_setup, "_request_bytes", return_value=encoded.getvalue()) as request:
+                asset_setup._download_surface(first_output, preset)
+            self.assertEqual(request.call_count, 1)
+            with patch.object(asset_setup, "_request_bytes", side_effect=OSError("offline")) as request:
+                asset_setup._download_surface(second_output, preset)
+            self.assertEqual(request.call_count, 0)
+            self.assertTrue((second_output / "atlas.png").is_file())
 
 
 if __name__ == "__main__":

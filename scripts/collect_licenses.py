@@ -12,6 +12,8 @@ DISTRIBUTIONS = (
     "opencv-python",
     "Pillow",
     "pywebview",
+    "pystray",
+    "six",
     "pythonnet",
     "clr-loader",
     "cffi",

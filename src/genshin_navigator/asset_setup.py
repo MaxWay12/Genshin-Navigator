@@ -84,14 +84,33 @@ def _world_to_atlas(min_x: int, min_y: int) -> list[list[float]]:
     ]
 
 
+def _valid_image(path: Path) -> bool:
+    try:
+        with Image.open(path) as image:
+            image.verify()
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def _download_surface(output: Path, preset: RegionPreset) -> dict[str, Any]:
     tiles = output / "tiles"
     tiles.mkdir(parents=True, exist_ok=True)
+    # Staging lives directly below datasets/local. Keeping verified source tiles
+    # beside it lets an interrupted first run resume without exposing partial atlases.
+    cache = output.parents[2] / "downloads" / preset.region_id / ASSET_REVISION
+    cache.mkdir(parents=True, exist_ok=True)
     positions = [(x, y) for y in preset.tile_y for x in preset.tile_x]
 
     def fetch(position: tuple[int, int]) -> tuple[int, int, Path | None]:
         x, y = position
         destination = tiles / f"{x}_{y}_N1.webp"
+        cached = cache / destination.name
+        if cached.is_file() and _valid_image(cached):
+            shutil.copy2(cached, destination)
+            return x, y, destination
+        if cached.exists():
+            cached.unlink()
         url = TILE_URL.format(
             map_id=2, revision=ASSET_REVISION, x=x, y=y, zoom="N1"
         )
@@ -101,9 +120,13 @@ def _download_surface(output: Path, preset: RegionPreset) -> dict[str, Any]:
             if error.code == 404:
                 return x, y, None
             raise
-        temporary = destination.with_suffix(".webp.tmp")
+        temporary = cached.with_suffix(".webp.tmp")
         temporary.write_bytes(data)
-        os.replace(temporary, destination)
+        if not _valid_image(temporary):
+            temporary.unlink(missing_ok=True)
+            raise ValueError(f"Downloaded map tile is not a valid image: {x},{y}")
+        os.replace(temporary, cached)
+        shutil.copy2(cached, destination)
         return x, y, destination
 
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -263,7 +286,45 @@ def _promote_assets(items: list[tuple[Path, Path]]) -> None:
                 previous.unlink()
 
 
-def setup_region(config: AppConfig, region_id: str, *, force: bool = False) -> dict[str, Any]:
+def region_asset_status(config: AppConfig, region_id: str) -> dict[str, Any]:
+    if region_id not in PRESETS:
+        raise ValueError(f"No first-run asset preset for region {region_id!r}")
+    preset = PRESETS[region_id]
+    reference_root = config.data.surface_metadata_path.parent.parent
+    poi_root = config.poi.catalog_path.parent
+    final_surface = reference_root / preset.surface_dir
+    final_underground = reference_root / "hoyolab_fontaine_underground"
+    final_anchors = reference_root / "sumeru_semantic_anchors"
+    final_poi = poi_root / preset.poi_file
+    required = [final_surface / "atlas.png", final_surface / (
+        "pyramid.json" if preset.underground else "surface_pyramid.json"
+    ), final_poi]
+    if preset.anchors:
+        required.append(final_anchors / "anchors.json")
+    missing = []
+    for path in required:
+        if path.exists():
+            continue
+        try:
+            missing.append(str(path.relative_to(Path.cwd())))
+        except ValueError:
+            missing.append(path.name)
+    return {
+        "region_id": region_id,
+        "ready": not missing,
+        "required_asset_count": len(required),
+        "missing_asset_count": len(missing),
+        "missing_assets": missing,
+    }
+
+
+def setup_region(
+    config: AppConfig,
+    region_id: str,
+    *,
+    force: bool = False,
+    progress=None,
+) -> dict[str, Any]:
     if region_id not in PRESETS:
         raise ValueError(f"No first-run asset preset for region {region_id!r}")
     preset = PRESETS[region_id]
@@ -281,6 +342,8 @@ def setup_region(config: AppConfig, region_id: str, *, force: bool = False) -> d
     if not force and all(path.exists() for path in required):
         return {"region_id": region_id, "status": "already_ready"}
 
+    notify = progress or (lambda _stage: None)
+
     staging_parent = reference_root.parent
     staging_parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".setup-{region_id}-", dir=staging_parent))
@@ -288,11 +351,14 @@ def setup_region(config: AppConfig, region_id: str, *, force: bool = False) -> d
         staged_refs = staging / "references"
         staged_surface = staged_refs / preset.surface_dir
         staged_surface.mkdir(parents=True)
+        notify("Downloading surface map tiles")
         metadata = _download_surface(staged_surface, preset)
+        notify("Downloading official POI metadata")
         labels = fetch_labels(map_id=2, lang=config.data.lang)
         points = fetch_points(map_id=2, lang=config.data.lang)
         underground_metadata = None
         if preset.underground:
+            notify("Downloading underground floors")
             groups = select_point_groups(
                 fetch_point_groups(2, config.data.lang),
                 group_ids=set(FONTAINE_GROUP_IDS),
@@ -309,6 +375,7 @@ def setup_region(config: AppConfig, region_id: str, *, force: bool = False) -> d
                 staged_surface / "pyramid.json",
             )
         if preset.anchors:
+            notify("Building semantic anchor catalog")
             staged_anchors = staged_refs / "sumeru_semantic_anchors"
             _write_anchors(
                 staged_anchors / "anchors.json", staged_anchors / "icons",
@@ -328,6 +395,7 @@ def setup_region(config: AppConfig, region_id: str, *, force: bool = False) -> d
             stats=stats, spaces=spaces,
         )
 
+        notify("Validating and installing the completed region")
         promotion = [(staged_surface, final_surface)]
         if preset.underground:
             promotion.append(

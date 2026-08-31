@@ -9,6 +9,13 @@
     "height": 216
   },
   "interval_seconds": 0.1,
+  "performance": {
+    "mode": "balanced",
+    "global_search_max_interval_seconds": 1.2,
+    "paused_interval_seconds": 0.25,
+    "opencv_threads": 2,
+    "show_metrics": true
+  },
   "matcher": {
     "max_features": 80000,
     "ratio_threshold": 0.72,
@@ -74,10 +81,13 @@
     "calibration_path": "datasets/local/calibration/fontaine.json",
     "default_view": "hud",
     "hud_width": 360,
-    "hud_height": 150,
+    "hud_height": 180,
     "hud_state_path": "datasets/local/ui/hud_state.json",
+    "navigation_state_path": "datasets/local/ui/navigation_state.json",
     "collected_hold_seconds": 1.0,
     "global_hotkeys": true,
+    "tray_enabled": true,
+    "max_target_distance_m": null,
     "hotkeys": {
       "previous": 100,
       "next": 102,
@@ -87,7 +97,10 @@
       "toggle_view": 96,
       "toggle_lock": 110,
       "quit": 105,
-      "report_issue": 107
+      "report_issue": 107,
+      "toggle_pause": 106,
+      "cycle_target_filter": 111,
+      "blacklist_target": 109
     }
   },
   "poi_guidance": {
