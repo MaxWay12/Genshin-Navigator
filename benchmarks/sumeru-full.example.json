@@ -1,0 +1,56 @@
+{
+  "format_version": 1,
+  "name": "sumeru-full-v013",
+  "kpis": {
+    "max_false_locks": 0,
+    "max_wrong_layer_positions": 0,
+    "min_tracking_coverage": 0.95,
+    "max_untracked_streak_seconds": 2,
+    "max_reacquire_p95_seconds": 3,
+    "max_one_frame_layer_runs": 0,
+    "max_stationary_jitter_p95_px": 5,
+    "min_position_checkpoints": 2
+  },
+  "scenarios": [
+    {
+      "name": "forest",
+      "path": "../datasets/local/scenarios/sumeru_full/forest",
+      "gating": true
+    },
+    {
+      "name": "city",
+      "path": "../datasets/local/scenarios/sumeru_full/city",
+      "gating": true
+    },
+    {
+      "name": "desert",
+      "path": "../datasets/local/scenarios/sumeru_full/desert",
+      "gating": true
+    },
+    {
+      "name": "sparse_ruins",
+      "path": "../datasets/local/scenarios/sumeru_full/sparse_ruins",
+      "gating": true
+    },
+    {
+      "name": "forest_desert_teleport",
+      "path": "../datasets/local/scenarios/sumeru_full/forest_desert_teleport",
+      "gating": true
+    },
+    {
+      "name": "forest_cave",
+      "path": "../datasets/local/scenarios/sumeru_full/forest_cave",
+      "gating": true
+    },
+    {
+      "name": "desert_dungeon",
+      "path": "../datasets/local/scenarios/sumeru_full/desert_dungeon",
+      "gating": true
+    },
+    {
+      "name": "floor_transition",
+      "path": "../datasets/local/scenarios/sumeru_full/floor_transition",
+      "gating": true
+    }
+  ]
+}

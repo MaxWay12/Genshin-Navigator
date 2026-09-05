@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.3-alpha — candidate, not published
+
+- Add experimental full Sumeru surface and official underground overlays.
+- Resolve current map revision/origin from public metadata and group membership from official POI links.
+- Build overlapping surface sections in canonical coordinates; validate the locator before installing assets.
+- Preserve SQLite progress/hints when upgrading desert POI to Sumeru; keep absent legacy points inactive in their original space.
+- Keep legacy desert configs for replay. New full-region config disables desert-only fallback profiles.
+- Full-region gameplay scenarios and hardware performance acceptance remain pending.
+
 ## v0.1.2-alpha — 2026-09-05
 
 - Add local styled WebView2 launcher, region readiness and settings.

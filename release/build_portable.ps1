@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "v0.1.2-alpha",
+    [string]$Version = "v0.1.3-alpha",
     [string]$EnvironmentPath = ""
 )
 
@@ -13,6 +13,15 @@ $Work = Join-Path $ProjectRoot "build\pyinstaller"
 $PackageName = "GenshinNavigator-$Version-windows-x64"
 $Stage = Join-Path $Dist $PackageName
 $Zip = Join-Path $Dist "$PackageName.zip"
+if ($Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+-[a-zA-Z0-9.-]+$') {
+    throw "Invalid release version"
+}
+$DistBoundary = [IO.Path]::GetFullPath($Dist).TrimEnd('\') + '\'
+foreach ($TargetPath in @($Stage, $Zip, (Join-Path $Dist 'GenshinNavigator'))) {
+    if (-not [IO.Path]::GetFullPath($TargetPath).StartsWith($DistBoundary, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Build target is outside dist"
+    }
+}
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Missing .venv. Create the verified Python environment first."
@@ -58,6 +67,7 @@ function Copy-ReleaseDirectory([string]$Relative) {
 
 Copy-ReleaseFile "config.example.json"
 Copy-ReleaseFile "config.sumeru.example.json"
+Copy-ReleaseFile "config.sumeru-full.example.json"
 Copy-ReleaseFile "release/regions.portable.json" "regions.json"
 Copy-ReleaseFile "README.md"
 Copy-ReleaseFile "CHANGELOG.md"
@@ -69,6 +79,7 @@ Copy-ReleaseFile $ReleaseNotes
 Copy-ReleaseFile "LICENSE"
 Copy-ReleaseFile "THIRD_PARTY_NOTICES.md"
 Copy-ReleaseFile "docs/v012-validation.md"
+Copy-ReleaseFile "docs/v013-validation.md"
 Copy-ReleaseFile "release/Start-Fontaine.cmd" "Start-Fontaine.cmd"
 Copy-ReleaseFile "release/Start-Sumeru-Experimental.cmd" "Start-Sumeru-Experimental.cmd"
 Copy-ReleaseFile "release/Configure-Minimap.cmd" "Configure-Minimap.cmd"
