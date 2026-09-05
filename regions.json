@@ -8,10 +8,10 @@
       "config": "config.example.json"
     },
     {
-      "id": "sumeru_desert",
-      "display_name": "Сумеру — пустыня",
+      "id": "sumeru",
+      "display_name": "Сумеру — леса, пустыня и подземелья",
       "support": "experimental",
-      "config": "config.sumeru.example.json"
+      "config": "config.sumeru-full.example.json"
     }
   ]
 }

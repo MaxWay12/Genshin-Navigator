@@ -41,6 +41,7 @@ def build_underground_pyramid(
     surface_metadata = json.loads(surface_metadata_path.read_text(encoding="utf-8"))
     base = json.loads(base_pyramid_path.read_text(encoding="utf-8"))
     underground = json.loads(underground_metadata_path.read_text(encoding="utf-8"))
+    region_id = str(surface_metadata.get("region_id", "fontaine"))
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     surface_atlas = surface_metadata_path.parent / "atlas.png"
@@ -48,7 +49,7 @@ def build_underground_pyramid(
     replaced_surface = False
     for raw_level in base["levels"]:
         level = dict(raw_level)
-        if level.get("map_layer_id", base.get("default_map_layer_id", "surface")) == "surface" and not replaced_surface:
+        if region_id == "fontaine" and level.get("map_layer_id", base.get("default_map_layer_id", "surface")) == "surface" and not replaced_surface:
             level.update(
                 {
                     "id": "fontaine_surface_full_n1",
@@ -87,7 +88,7 @@ def build_underground_pyramid(
                 continue
             levels.append(
                 {
-                    "id": f"fontaine_ug_g{group['group_id']}_f{floor['floor_id']}",
+                    "id": f"{region_id}_ug_g{group['group_id']}_f{floor['floor_id']}",
                     "image": _relative_path(image_path, output_path.parent),
                     "resolution_scale": 2.0,
                     "map_layer_id": floor["layer_id"],

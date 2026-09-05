@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -42,8 +44,15 @@ def _fetch(endpoint: str, *, map_id: int, lang: str, map_version: str | None) ->
         f"{endpoint}?{query}",
         headers=headers,
     )
-    with urllib.request.urlopen(request, timeout=90) as response:
-        payload = json.load(response)
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                payload = json.load(response)
+            break
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+            if attempt or isinstance(error, urllib.error.HTTPError) and error.code < 500:
+                raise
+            time.sleep(0.5)
     if payload.get("retcode") != 0:
         raise RuntimeError(payload.get("message") or "HoYoLAB API request failed")
     return payload.get("data", {})
@@ -117,6 +126,8 @@ def build_catalog(
             )
 
     result: list[PointOfInterest] = []
+    unavailable = {(int(f["group_id"]), int(f["floor_id"]))
+                   for f in (underground_metadata or {}).get("unavailable_floors", [])}
     stats = {"selected": 0, "surface": 0, "underground": 0, "skipped_unknown_floor": 0, "skipped_outside_reference": 0}
     for point in points:
         label_id = int(point.get("label_id", 0))
@@ -129,6 +140,9 @@ def build_catalog(
             floor_key = (int(point_group["group_id"]), int(point_group["floor_id"]))
             floor = floors.get(floor_key)
             if floor is None:
+                if floor_key in unavailable:
+                    stats["unavailable_floor"] = stats.get("unavailable_floor", 0) + 1
+                    continue
                 stats["skipped_unknown_floor"] += 1
                 continue
             layer_id, world_to_local, image_size = floor

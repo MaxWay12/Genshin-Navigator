@@ -7,7 +7,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,6 +32,7 @@ from .hoyolab_underground import (
     select_point_groups,
 )
 from .underground_pyramid import build_underground_pyramid
+from .region_sources import fetch_surface_metadata, regional_groups, surface_bounds
 
 
 ASSET_REVISION = "eea752b746ae1f2e0c1988a574f2b7b0"
@@ -54,18 +55,26 @@ class RegionPreset:
     level_id: str
     underground: bool = False
     anchors: bool = False
+    group_ids: frozenset[int] | None = None
+    revision: str = ASSET_REVISION
+    origin: tuple[float, float] = WORLD_ORIGIN
 
 
 PRESETS = {
     "fontaine": RegionPreset(
         "fontaine", 8, range(32, 44), range(12, 24),
         "hoyolab_fontaine_full_n1", "fontaine.json", "fontaine_surface_full_n1",
-        underground=True,
+        underground=True, group_ids=FONTAINE_GROUP_IDS,
     ),
     "sumeru_desert": RegionPreset(
         "sumeru_desert", 4, range(32, 44), range(22, 30),
         "hoyolab_sumeru_desert_n1", "sumeru-desert.json", "sumeru_desert_surface_n1",
         anchors=True,
+    ),
+    "sumeru": RegionPreset(
+        "sumeru", 4, range(0), range(0),
+        "hoyolab_sumeru_full_n1", "sumeru.json", "sumeru_surface_full_n1",
+        underground=True,
     ),
 }
 
@@ -98,7 +107,7 @@ def _download_surface(output: Path, preset: RegionPreset) -> dict[str, Any]:
     tiles.mkdir(parents=True, exist_ok=True)
     # Staging lives directly below datasets/local. Keeping verified source tiles
     # beside it lets an interrupted first run resume without exposing partial atlases.
-    cache = output.parents[2] / "downloads" / preset.region_id / ASSET_REVISION
+    cache = output.parents[2] / "downloads" / preset.region_id / preset.revision
     cache.mkdir(parents=True, exist_ok=True)
     positions = [(x, y) for y in preset.tile_y for x in preset.tile_x]
 
@@ -112,12 +121,14 @@ def _download_surface(output: Path, preset: RegionPreset) -> dict[str, Any]:
         if cached.exists():
             cached.unlink()
         url = TILE_URL.format(
-            map_id=2, revision=ASSET_REVISION, x=x, y=y, zoom="N1"
+            map_id=2, revision=preset.revision, x=x, y=y, zoom="N1"
         )
         try:
             data = _request_bytes(url)
         except urllib.error.HTTPError as error:
             if error.code == 404:
+                if preset.region_id == "sumeru":
+                    raise ValueError(f"Missing Sumeru tile {x},{y}; previous assets preserved") from error
                 return x, y, None
             raise
         temporary = cached.with_suffix(".webp.tmp")
@@ -146,7 +157,7 @@ def _download_surface(output: Path, preset: RegionPreset) -> dict[str, Any]:
         "source_acquisition": "downloaded locally by the user",
         "region_id": preset.region_id,
         "map_id": 2,
-        "revision": ASSET_REVISION,
+        "revision": preset.revision,
         "zoom": "N1",
         "tile_size": 256,
         "tile_bounds": {
@@ -159,10 +170,11 @@ def _download_surface(output: Path, preset: RegionPreset) -> dict[str, Any]:
         "tile_count": sum(tile is not None for _, _, tile in downloaded),
         "requested_tile_count": len(downloaded),
         "missing_tile_count": sum(tile is None for _, _, tile in downloaded),
-        "world_origin_zoom_0": list(WORLD_ORIGIN),
-        "world_to_atlas": _world_to_atlas(preset.tile_x.start, preset.tile_y.start),
+        "world_origin_zoom_0": list(preset.origin),
+        "world_to_atlas": [[0.5, 0, preset.origin[0] / 2 - preset.tile_x.start * 256],
+                           [0, 0.5, preset.origin[1] / 2 - preset.tile_y.start * 256], [0, 0, 1]],
         "url_template": TILE_URL.format(
-            map_id=2, revision=ASSET_REVISION, x="{x}", y="{y}", zoom="N1"
+            map_id=2, revision=preset.revision, x="{x}", y="{y}", zoom="N1"
         ),
     }
     (output / "metadata.json").write_text(
@@ -182,6 +194,9 @@ def _download_surface(output: Path, preset: RegionPreset) -> dict[str, Any]:
             "matcher": {"max_features": 80000},
         }],
     }
+    if preset.region_id == "sumeru":
+        from .surface_sections import build_surface_sections
+        pyramid["levels"] = build_surface_sections(atlas, output, preset.region_id)
     (output / "surface_pyramid.json").write_text(
         json.dumps(pyramid, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -293,7 +308,7 @@ def region_asset_status(config: AppConfig, region_id: str) -> dict[str, Any]:
     reference_root = config.data.surface_metadata_path.parent.parent
     poi_root = config.poi.catalog_path.parent
     final_surface = reference_root / preset.surface_dir
-    final_underground = reference_root / "hoyolab_fontaine_underground"
+    final_underground = reference_root / f"hoyolab_{region_id}_underground"
     final_anchors = reference_root / "sumeru_semantic_anchors"
     final_poi = poi_root / preset.poi_file
     required = [final_surface / "atlas.png", final_surface / (
@@ -301,6 +316,20 @@ def region_asset_status(config: AppConfig, region_id: str) -> dict[str, Any]:
     ), final_poi]
     if preset.anchors:
         required.append(final_anchors / "anchors.json")
+    if preset.underground:
+        required.append(final_underground / "metadata.json")
+    invalid = []
+    if region_id == "sumeru":
+        try:
+            for manifest_path in [final_surface / "pyramid.json", final_underground / "metadata.json"]:
+                if not manifest_path.is_file():
+                    continue
+                raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+                required.extend(manifest_path.parent / level["image"] for level in raw.get("levels", []))
+                required.extend(manifest_path.parent / floor["path"]
+                                for group in raw.get("groups", []) for floor in group["floors"])
+        except (ValueError, KeyError, OSError):
+            invalid.append("invalid_regional_manifest")
     missing = []
     for path in required:
         if path.exists():
@@ -311,10 +340,14 @@ def region_asset_status(config: AppConfig, region_id: str) -> dict[str, Any]:
             missing.append(path.name)
     return {
         "region_id": region_id,
-        "ready": not missing,
+        "ready": not missing and not invalid,
         "required_asset_count": len(required),
         "missing_asset_count": len(missing),
         "missing_assets": missing,
+        "invalid_assets": invalid,
+        "surface_ready": (final_surface / "atlas.png").is_file(),
+        "underground_ready": (final_underground / "metadata.json").is_file() if preset.underground else None,
+        "poi_ready": final_poi.is_file(),
     }
 
 
@@ -331,7 +364,7 @@ def setup_region(
     reference_root = config.data.surface_metadata_path.parent.parent
     poi_root = config.poi.catalog_path.parent
     final_surface = reference_root / preset.surface_dir
-    final_underground = reference_root / "hoyolab_fontaine_underground"
+    final_underground = reference_root / f"hoyolab_{region_id}_underground"
     final_anchors = reference_root / "sumeru_semantic_anchors"
     final_poi = poi_root / preset.poi_file
     required = [final_surface / "atlas.png", final_surface / (
@@ -339,7 +372,9 @@ def setup_region(
     ), final_poi]
     if preset.anchors:
         required.append(final_anchors / "anchors.json")
-    if not force and all(path.exists() for path in required):
+    if preset.underground:
+        required.append(final_underground / "metadata.json")
+    if not force and region_asset_status(config, region_id)["ready"]:
         return {"region_id": region_id, "status": "already_ready"}
 
     notify = progress or (lambda _stage: None)
@@ -351,23 +386,43 @@ def setup_region(
         staged_refs = staging / "references"
         staged_surface = staged_refs / preset.surface_dir
         staged_surface.mkdir(parents=True)
+        notify("Downloading official POI metadata")
+        version = getattr(config.data, "map_version", None)
+        labels = fetch_labels(map_id=2, lang=config.data.lang, map_version=version)
+        points = fetch_points(map_id=2, lang=config.data.lang, map_version=version)
+        upstream = None
+        if region_id == "sumeru":
+            upstream = fetch_surface_metadata(2, config.data.lang, getattr(config.data, "asset_revision", None))
+            tile_x, tile_y = surface_bounds(points, preset.area_id, upstream["origin"])
+            preset = replace(preset, tile_x=tile_x, tile_y=tile_y,
+                             revision=upstream["revision"], origin=tuple(upstream["origin"]))
         notify("Downloading surface map tiles")
         metadata = _download_surface(staged_surface, preset)
-        notify("Downloading official POI metadata")
-        labels = fetch_labels(map_id=2, lang=config.data.lang)
-        points = fetch_points(map_id=2, lang=config.data.lang)
         underground_metadata = None
         if preset.underground:
             notify("Downloading underground floors")
-            groups = select_point_groups(
-                fetch_point_groups(2, config.data.lang),
-                group_ids=set(FONTAINE_GROUP_IDS),
-                min_floors=1,
-            )
-            staged_underground = staged_refs / "hoyolab_fontaine_underground"
+            all_groups = fetch_point_groups(2, config.data.lang)
+            evidence = []
+            if preset.group_ids is None:
+                groups, evidence = regional_groups(all_groups, points, preset.area_id)
+            else:
+                groups = select_point_groups(all_groups, group_ids=set(preset.group_ids), min_floors=1)
+            unavailable = [{"group_id": int(g["id"]), "floor_id": int(f["id"])}
+                           for g in groups for f in g.get("floors", [])
+                           if not f.get("overlay", {}).get("url")]
+            groups = [dict(g, floors=[f for f in g["floors"] if f.get("overlay", {}).get("url")])
+                      for g in groups if any(f.get("overlay", {}).get("url") for f in g["floors"])]
+            staged_underground = staged_refs / f"hoyolab_{region_id}_underground"
             underground_metadata = download_point_groups(
                 staged_underground, groups, map_id=2, lang=config.data.lang, workers=4
             )
+            if unavailable:
+                underground_metadata["unavailable_floors"] = unavailable
+                (staged_underground / "metadata.json").write_text(
+                    json.dumps(underground_metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            if upstream:
+                (staged_surface / "regional_source.json").write_text(json.dumps(
+                    {"map": upstream, "groups": evidence}, ensure_ascii=False, indent=2), encoding="utf-8")
             build_underground_pyramid(
                 staged_surface / "metadata.json",
                 staged_surface / "surface_pyramid.json",
@@ -386,20 +441,27 @@ def setup_region(
             area_id=preset.area_id, label_kinds=DEFAULT_LABEL_KINDS,
         )
         spaces = build_space_metrics(metadata, underground_metadata)
+        if region_id == "sumeru" and (stats["skipped_unknown_floor"] or not pois):
+            raise ValueError("Incomplete Sumeru POI catalog; previous assets preserved")
         staged_poi = staging / "poi" / preset.poi_file
         write_catalog(
             staged_poi, pois,
             map_version=content_version_for(
-                labels, points, asset_revision=ASSET_REVISION
+                labels, points, asset_revision=preset.revision, explicit_version=version
             ),
             stats=stats, spaces=spaces,
         )
 
         notify("Validating and installing the completed region")
+        if region_id == "sumeru":
+            from .pyramid import load_pyramid
+            # Fail while still in staging, not on the user's next GPS launch.
+            checked = load_pyramid(staged_surface / "pyramid.json", config.matcher)
+            del checked
         promotion = [(staged_surface, final_surface)]
         if preset.underground:
             promotion.append(
-                (staged_refs / "hoyolab_fontaine_underground", final_underground)
+                (staged_refs / f"hoyolab_{region_id}_underground", final_underground)
             )
         if preset.anchors:
             promotion.append((staged_refs / "sumeru_semantic_anchors", final_anchors))

@@ -359,6 +359,7 @@ class DataConfig:
     area_id: int = 8
     lang: str = "ru-ru"
     map_version: str | None = None
+    asset_revision: str | None = None
 
     def __post_init__(self) -> None:
         if self.storage_backend not in {"auto", "sqlite", "json"}:

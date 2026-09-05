@@ -21,6 +21,8 @@ class RegionManifest:
     entries: tuple[RegionEntry, ...]
 
     def get(self, region_id: str) -> RegionEntry:
+        if region_id == "sumeru_desert" and any(entry.id == "sumeru" for entry in self.entries):
+            region_id = "sumeru"
         for entry in self.entries:
             if entry.id == region_id:
                 return entry

@@ -106,7 +106,7 @@ class AssetSetupTests(unittest.TestCase):
 
             with patch.object(
                 asset_setup, "_download_surface", side_effect=OSError("network down")
-            ):
+            ), patch.object(asset_setup, "fetch_points", return_value=[]), patch.object(asset_setup, "fetch_labels", return_value=[]):
                 with self.assertRaisesRegex(OSError, "network down"):
                     asset_setup.setup_region(config, "sumeru_desert", force=True)
 

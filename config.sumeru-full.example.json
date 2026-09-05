@@ -1,0 +1,200 @@
+{
+  "map_path": "datasets/local/references/hoyolab_sumeru_full_n1/atlas.png",
+  "pyramid_path": "datasets/local/references/hoyolab_sumeru_full_n1/pyramid.json",
+  "debug_map_path": "datasets/local/references/hoyolab_sumeru_full_n1/atlas.png",
+  "roi": {
+    "left": 57,
+    "top": 19,
+    "width": 216,
+    "height": 216
+  },
+  "interval_seconds": 0.1,
+  "performance": {
+    "mode": "balanced",
+    "global_search_max_interval_seconds": 1.2,
+    "paused_interval_seconds": 0.25,
+    "opencv_threads": 2,
+    "show_metrics": true
+  },
+  "matcher": {
+    "max_features": 80000,
+    "ratio_threshold": 0.72,
+    "min_matches": 12,
+    "min_inliers": 8,
+    "min_scale": 0.2,
+    "max_scale": 5
+  },
+  "tracker": {
+    "min_confidence": 0.35,
+    "min_inliers": 8,
+    "acquire_hits": 2,
+    "relocate_hits": 3,
+    "candidate_radius_px": 18,
+    "max_speed_px_per_second": 90,
+    "jump_margin_px": 12,
+    "smoothing_alpha": 0.4,
+    "lost_timeout_seconds": 1.5
+  },
+  "local_search": {
+    "enabled": true,
+    "radius_px": 80,
+    "ratio_threshold": 0.82,
+    "min_matches": 8,
+    "min_inliers": 8
+  },
+  "anchor_localization": {
+    "enabled": false,
+    "catalog_path": "datasets/local/references/sumeru_semantic_anchors/anchors.json",
+    "template_paths": {
+      "statue": "datasets/local/references/sumeru_semantic_anchors/icons/statue.png",
+      "waypoint": "datasets/local/references/sumeru_semantic_anchors/icons/waypoint.png",
+      "domain": "datasets/local/references/sumeru_semantic_anchors/icons/domain.png"
+    },
+    "min_template_score": 0.3,
+    "min_global_anchors": 3,
+    "local_match_radius_px": 45,
+    "max_residual_px": 12,
+    "default_canonical_scale": 0.83
+  },
+  "motion_fallback": {
+    "enabled": false,
+    "max_features": 160,
+    "min_inliers": 12,
+    "forward_backward_error_px": 1.5,
+    "max_residual_px": 3,
+    "max_screen_step_px": 12,
+    "min_phase_response": 0.22,
+    "max_phase_disagreement_px": 2,
+    "max_consecutive_frames": 5,
+    "confidence": 0.58
+  },
+  "edge_correlation": {
+    "enabled": false,
+    "scales": [
+      0.8,
+      0.83,
+      0.86
+    ],
+    "rotations_degrees": [
+      0
+    ],
+    "min_score": 0.32,
+    "min_peak_margin": 0.07,
+    "exclusion_radius_px": 100,
+    "canny_low": 30,
+    "canny_high": 100,
+    "coarse_scale": 0.35,
+    "coarse_candidates": 3,
+    "refine_radius_px": 16,
+    "confidence": 0.52
+  },
+  "failure_recorder": {
+    "enabled": true,
+    "output_dir": "datasets/local/diagnostics/sumeru",
+    "pre_frames": 8,
+    "post_frames": 20,
+    "cooldown_seconds": 5,
+    "record_acquisition_failures": true,
+    "acquisition_timeout_seconds": 2
+  },
+  "screen_gate": {
+    "enabled": false,
+    "template_path": null,
+    "match_threshold": 0.4,
+    "blank_std_threshold": 12
+  },
+  "poi": {
+    "enabled": true,
+    "catalog_path": "datasets/local/poi/sumeru.json",
+    "progress_path": "datasets/local/progress/sumeru-desert.json",
+    "kinds": [
+      "chest",
+      "hydroculus",
+      "waypoint"
+    ],
+    "target_kinds": [
+      "chest"
+    ]
+  },
+  "data": {
+    "storage_backend": "auto",
+    "database_path": "datasets/local/data/genshin_navigator.db",
+    "backup_dir": "datasets/local/backups",
+    "backup_retention": 5,
+    "region_id": "sumeru",
+    "surface_metadata_path": "datasets/local/references/hoyolab_sumeru_full_n1/metadata.json",
+    "underground_metadata_path": "datasets/local/references/hoyolab_sumeru_underground/metadata.json",
+    "map_id": 2,
+    "area_id": 4,
+    "lang": "ru-ru",
+    "asset_revision": null
+  },
+  "navigation": {
+    "enabled": true,
+    "calibration_path": "datasets/local/calibration/sumeru.json",
+    "default_view": "hud",
+    "hud_width": 360,
+    "hud_height": 180,
+    "hud_state_path": "datasets/local/ui/hud_state.json",
+    "navigation_state_path": "datasets/local/ui/navigation_state.json",
+    "collected_hold_seconds": 1,
+    "global_hotkeys": true,
+    "tray_enabled": true,
+    "max_target_distance_m": null,
+    "hotkeys": {
+      "previous": 100,
+      "next": 102,
+      "skip": 98,
+      "collected_hold": 101,
+      "undo": 104,
+      "toggle_view": 96,
+      "toggle_lock": 110,
+      "quit": 105,
+      "report_issue": 107,
+      "toggle_pause": 106,
+      "cycle_target_filter": 111,
+      "blacklist_target": 109
+    },
+    "alternative_hotkeys": {
+      "enabled": true,
+      "modifiers": 3,
+      "bindings": {
+        "previous": 37,
+        "next": 39,
+        "skip": 40,
+        "collected_hold": 32,
+        "undo": 38,
+        "toggle_view": 77,
+        "toggle_lock": 76,
+        "quit": 81,
+        "report_issue": 82,
+        "toggle_pause": 80,
+        "cycle_target_filter": 70,
+        "blacklist_target": 66,
+        "toggle_details": 72,
+        "previous_page": 33,
+        "next_page": 34
+      }
+    }
+  },
+  "poi_guidance": {
+    "enabled": true,
+    "cache_dir": "datasets/local/cache/poi",
+    "refresh_after_days": 7,
+    "negative_cache_hours": 24,
+    "max_cache_mb": 256,
+    "request_timeout_seconds": 8,
+    "hotkeys": {
+      "toggle_details": 103,
+      "previous_page": 97,
+      "next_page": 99
+    }
+  },
+  "progress_sync": {
+    "enabled": true,
+    "auth_profile_dir": "datasets/local/auth/hoyolab_webview",
+    "request_timeout_seconds": 8,
+    "retry_count": 1,
+    "min_write_interval_seconds": 0.15
+  }
+}
