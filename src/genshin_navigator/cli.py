@@ -797,6 +797,10 @@ def main(argv: list[str] | None = None) -> int:
             print(manifest)
             return 0
 
+        if args.command == "track":
+            roi_check = check_config_roi(config)
+            if not roi_check.valid:
+                raise ValueError(roi_check.message)
         matcher = _build_matcher(config)
         if args.command == "diagnostic-record":
             saved = LiveApplication(config, matcher).record_diagnostic(args.duration)

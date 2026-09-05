@@ -67,6 +67,9 @@ def validate_roi(roi: Roi, screen: ScreenBounds) -> RoiCheck:
     elif roi.width < 120 or roi.height < 120:
         message = "ROI is unusually small; select the complete circular minimap"
         valid = False
+    elif not 0.85 <= roi.width / roi.height <= 1.15:
+        message = "ROI must be nearly square (0.85–1.15); run configure-roi and select the circular minimap"
+        valid = False
     else:
         message = "ROI is inside the current virtual desktop"
     return RoiCheck(valid, message, roi, screen)
@@ -122,5 +125,19 @@ def configure_roi(config_path: str | Path) -> Roi | None:
     check = validate_roi(roi, screen)
     if not check.valid:
         raise ValueError(check.message)
+    preview = "Genshin Navigator - Confirm minimap: Enter / cancel: Escape"
+    try:
+        cv2.imshow(preview, frame[int(y):int(y + height), int(x):int(x + width)])
+        while True:
+            key = cv2.waitKey(50) & 0xFF
+            if key in (10, 13):
+                break
+            if key == 27 or cv2.getWindowProperty(preview, cv2.WND_PROP_VISIBLE) < 1:
+                return None
+    finally:
+        try:
+            cv2.destroyWindow(preview)
+        except cv2.error:
+            pass
     write_roi_atomic(config_path, roi)
     return roi

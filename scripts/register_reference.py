@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import cv2
+from genshin_navigator.image_io import read_image
 import numpy as np
 
 
@@ -23,8 +24,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
-    canonical = cv2.imread(str(args.canonical), cv2.IMREAD_GRAYSCALE)
-    detail = cv2.imread(str(args.detail), cv2.IMREAD_GRAYSCALE)
+    canonical = read_image(str(args.canonical), cv2.IMREAD_GRAYSCALE)
+    detail = read_image(str(args.detail), cv2.IMREAD_GRAYSCALE)
     if canonical is None or detail is None:
         raise FileNotFoundError("Could not load one or both reference images")
     if not 0 < args.match_scale <= 1:

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import cv2
+from genshin_navigator.image_io import read_image
 
 
 def main() -> int:
@@ -25,7 +26,7 @@ def main() -> int:
 
     if args.resolution_scale <= 1.0:
         raise ValueError("Detail resolution scale must be greater than 1")
-    detail = cv2.imread(str(args.detail_image), cv2.IMREAD_GRAYSCALE)
+    detail = read_image(str(args.detail_image), cv2.IMREAD_GRAYSCALE)
     if detail is None:
         raise FileNotFoundError(f"Could not read detail image: {args.detail_image}")
     base = json.loads(args.base_pyramid.read_text(encoding="utf-8"))

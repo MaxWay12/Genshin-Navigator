@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 import cv2
+from genshin_navigator.image_io import write_image
 
 from genshin_navigator.capture import load_image
 from genshin_navigator.poi import PoiCatalog
@@ -48,7 +49,7 @@ def main() -> int:
             thickness=-1,
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(args.output), image):
+    if not write_image(str(args.output), image):
         raise OSError(f"Could not write {args.output}")
     print(args.output)
     return 0

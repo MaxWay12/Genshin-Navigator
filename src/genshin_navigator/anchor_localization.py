@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 import cv2
+from .image_io import read_image
 import numpy as np
 
 from .config import AnchorLocalizationConfig
@@ -44,7 +45,7 @@ class TemplateAnchorDetector:
         self.scales = tuple(float(scale) for scale in scales)
         self.templates: list[tuple[str, np.ndarray]] = []
         for kind, path in template_paths.items():
-            image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+            image = read_image(str(path), cv2.IMREAD_UNCHANGED)
             if image is None:
                 raise FileNotFoundError(f"Could not load anchor template: {path}")
             if image.ndim != 3 or image.shape[2] not in (3, 4):

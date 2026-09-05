@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import cv2
+from .image_io import read_image, write_image
 import numpy as np
 from PIL import Image, ImageGrab
 
@@ -29,7 +30,7 @@ def grab_roi(roi: Roi) -> np.ndarray:
 
 
 def load_image(path: str | Path) -> np.ndarray:
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    image = read_image(str(path), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError(f"Could not read image: {path}")
     return image
@@ -51,6 +52,6 @@ def save_screen(path: str | Path) -> Path:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     frame = grab_screen()
-    if not cv2.imwrite(str(output), frame):
+    if not write_image(str(output), frame):
         raise OSError(f"Could not write screenshot: {output}")
     return output.resolve()

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import cv2
+from genshin_navigator.image_io import read_image, write_image
 
 
 def main() -> int:
@@ -16,7 +17,7 @@ def main() -> int:
     if args.scale <= 0:
         raise ValueError("scale must be positive")
 
-    source = cv2.imread(str(args.source), cv2.IMREAD_COLOR)
+    source = read_image(str(args.source), cv2.IMREAD_COLOR)
     if source is None:
         raise ValueError(f"Could not read source atlas: {args.source}")
     height, width = source.shape[:2]
@@ -26,7 +27,7 @@ def main() -> int:
         interpolation=cv2.INTER_LINEAR,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(args.output), scaled):
+    if not write_image(str(args.output), scaled):
         raise OSError(f"Could not write scaled atlas: {args.output}")
     metadata = {
         "source": str(args.source),

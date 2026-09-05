@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import cv2
+from genshin_navigator.image_io import read_image, write_image
 import numpy as np
 
 
@@ -21,7 +22,7 @@ def main() -> int:
     parser.add_argument("--height", type=int, required=True)
     args = parser.parse_args()
 
-    source = cv2.imread(str(args.source), cv2.IMREAD_COLOR)
+    source = read_image(str(args.source), cv2.IMREAD_COLOR)
     if source is None:
         raise FileNotFoundError(f"Could not load source image: {args.source}")
     source_height, source_width = source.shape[:2]
@@ -46,7 +47,7 @@ def main() -> int:
 
     crop = source[args.y : args.y + args.height, args.x : args.x + args.width]
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(args.output), crop):
+    if not write_image(str(args.output), crop):
         raise OSError(f"Could not write crop: {args.output}")
 
     metadata = {

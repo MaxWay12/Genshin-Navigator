@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+from .image_io import read_image
 import numpy as np
 
 
@@ -71,7 +72,7 @@ def build_underground_pyramid(
     for group in underground["groups"]:
         for floor in group["floors"]:
             image_path = underground_metadata_path.parent / floor["path"]
-            image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+            image = read_image(str(image_path), cv2.IMREAD_GRAYSCALE)
             if image is None:
                 skipped.append({"layer_id": floor["layer_id"], "reason": "unreadable"})
                 continue

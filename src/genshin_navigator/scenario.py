@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 import cv2
+from .image_io import write_image
 import numpy as np
 
 from .capture import crop_roi, grab_screen, load_image
@@ -220,7 +221,7 @@ def record_scenario(
         )
         filename = f"minimap_{len(frames):05d}.png"
         relative = f"frames/{filename}"
-        if not cv2.imwrite(str(frames_dir / filename), minimap):
+        if not write_image(str(frames_dir / filename), minimap):
             raise OSError(f"Could not save scenario frame: {filename}")
         frames.append(
             {

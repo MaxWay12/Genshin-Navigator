@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 import cv2
+from .image_io import read_image
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -529,7 +530,7 @@ class DebugMapView:
         if hint.image_path is not None:
             if hint.image_path != self._hint_image_path:
                 self._hint_image_path = hint.image_path
-                self._hint_image = cv2.imread(str(hint.image_path), cv2.IMREAD_COLOR)
+                self._hint_image = read_image(str(hint.image_path), cv2.IMREAD_COLOR)
             image = self._hint_image
         if image is not None and image.size:
             height, width = image.shape[:2]
