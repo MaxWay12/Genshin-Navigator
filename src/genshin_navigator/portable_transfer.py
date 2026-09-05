@@ -35,8 +35,9 @@ def _linked(path: Path) -> bool:
 
 
 class PortableTransfer:
-    def __init__(self, destination: str | Path):
+    def __init__(self, destination: str | Path, *, installed_destination: str | Path | None = None):
         self.destination = Path(destination).resolve()
+        self.installed_destination = Path(installed_destination).resolve() if installed_destination else self.destination
 
     def _empty(self) -> None:
         for name in CONFIGS:
@@ -95,14 +96,14 @@ class PortableTransfer:
         if isinstance(value, str) and Path(value).is_absolute():
             path = Path(value).resolve()
             if path.is_relative_to(source):
-                return str(self.destination / path.relative_to(source))
+                return str(self.installed_destination / path.relative_to(source))
             external.append(value)
         elif isinstance(value, str) and ".." in Path(value).parts:
             if not ((base or source) / value).resolve().is_relative_to(source):
                 external.append(value)
         return value
 
-    def apply(self, source: str | Path, *, stopped: bool = False) -> dict:
+    def apply(self, source: str | Path, *, stopped: bool = False, cancelled=lambda: None) -> dict:
         if not stopped:
             raise ValueError("Сначала завершите GPS в старой установке и подтвердите это.")
         report = self.preview(source)
@@ -113,6 +114,7 @@ class PortableTransfer:
         installed: list[Path] = []
         try:
             for path in self._files(source):
+                cancelled()
                 target = stage / path.relative_to(source)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if path.suffix.lower() in {".db", ".sqlite", ".sqlite3"}:
@@ -135,12 +137,13 @@ class PortableTransfer:
                     for key in ("map_path", "pyramid_path", "debug_map_path"):
                         if raw.get(key):
                             asset = Path(raw[key])
-                            relative = asset.relative_to(self.destination) if asset.is_absolute() else asset
+                            relative = asset.relative_to(self.installed_destination) if asset.is_absolute() else asset
                             if not (stage / relative).resolve().is_relative_to(stage):
                                 raise ValueError("Asset выходит за пределы установки")
                             if not (stage / relative).is_file():
                                 raise ValueError(f"В переносе отсутствует обязательный asset: {relative}")
             self._empty()
+            cancelled()
             for child in list(stage.iterdir()):
                 if child.name == "datasets":
                     target = self.destination / "datasets/local"

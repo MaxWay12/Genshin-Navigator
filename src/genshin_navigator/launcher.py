@@ -121,8 +121,15 @@ class LauncherBridge:
         self._window = None
         self._launch_args: list[str] | None = None
         self._operation = {"busy": False, "message": ""}
+        self._operation_serial = 0
         self._lock = threading.Lock()
         self._source: str | None = None
+        self._release = None
+        self._updater = None
+        self._update_destination = None
+        self._ready_installation = None
+        self._launch_installation = None
+        self._import_plan = None
 
     def initial(self):
         region = next(iter(self._service.regions))
@@ -154,13 +161,15 @@ class LauncherBridge:
         with self._lock:
             if self._operation["busy"]:
                 raise ValueError("Дождитесь завершения операции")
-            self._operation = {"busy": True, "message": "Подготовка…"}
+            self._operation_serial += 1
+            operation_id = self._operation_serial
+            self._operation = {"busy": True, "message": "Подготовка…", "id": operation_id}
         def work():
             try:
-                callback()
-                self._operation = {"busy": False, "message": "Готово"}
+                result = callback()
+                self._operation = {"busy": False, "message": "Готово", "result": result, "id": operation_id}
             except Exception as error:
-                self._operation = {"busy": False, "message": str(error), "error": True}
+                self._operation = {"busy": False, "message": str(error), "error": True, "id": operation_id}
         threading.Thread(target=work, daemon=False).start()
         return True
 
@@ -207,6 +216,113 @@ class LauncherBridge:
             raise ValueError("Выберите исходную папку и подтвердите завершение старого GPS")
         return self._background(lambda: PortableTransfer(self._service.root).apply(self._source, stopped=True))
 
+    def check_updates(self):
+        from dataclasses import asdict
+        from .updates import ReleaseProvider
+        def check():
+            self._release = ReleaseProvider().newer_release(__version__)
+            self._update_destination = None
+            return {"release": asdict(self._release) if self._release else None}
+        return self._background(check)
+
+    def choose_update_destination(self):
+        if self._operation["busy"] or self._release is None:
+            raise ValueError("Сначала проверьте обновления")
+        import webview
+        from .updates import UpdateService
+        paths = self._window.create_file_dialog(webview.FileDialog.FOLDER)
+        if not paths:
+            return None
+        self._update_destination = Path(paths[0])
+        self._updater = UpdateService(self._service.root)
+        return self._background(lambda: {"update_preview": self._updater.preview(self._release, self._update_destination)})
+
+    def install_update(self, stopped):
+        if self._operation["busy"]:
+            raise ValueError("Дождитесь завершения операции")
+        if stopped is not True or self._updater is None or self._update_destination is None:
+            raise ValueError("Выберите пустую папку и подтвердите завершение GPS")
+        self._updater.cancelled.clear()
+        def install():
+            result = self._updater.apply(self._release, self._update_destination, stopped=True,
+                                         progress=lambda stage: self._operation.update(message=stage))
+            self._ready_installation = self._update_destination
+            return {"installed": result}
+        return self._background(install)
+
+    def cancel_update(self):
+        if self._updater is not None:
+            self._updater.cancelled.set()
+        return True
+
+    def launch_updated(self):
+        if self._operation["busy"] or self._ready_installation is None:
+            raise ValueError("Обновление ещё не подготовлено")
+        self._launch_installation = self._ready_installation
+        self._window.destroy()
+        return True
+
+    def _progress_service(self, region):
+        from .progress_backup import ProgressTransferService
+        config = load_config(self._service.config_path(region))
+        if config.data.storage_backend == "json" or not config.data.database_path.is_file():
+            raise ValueError("Обслуживание прогресса требует подготовленной SQLite-базы")
+        return ProgressTransferService(config.data.database_path, backup_dir=config.data.backup_dir,
+                                       backup_retention=config.data.backup_retention), config
+
+    def data_status(self, region):
+        def status():
+            from .application import load_runtime_data
+            config = load_config(self._service.config_path(region))
+            bundle = load_runtime_data(config)
+            if bundle is None or bundle.provider is None:
+                raise ValueError("Сначала подготовьте SQLite-данные региона")
+            return {"data_status": bundle.provider.status(config.data.region_id)}
+        return self._background(status)
+
+    def export_progress(self, region):
+        if self._operation["busy"]:
+            raise ValueError("Дождитесь завершения операции")
+        import webview
+        paths = self._window.create_file_dialog(webview.FileDialog.SAVE, save_filename=f"progress-{region}.json")
+        if not paths:
+            return None
+        output = Path(paths[0]).resolve()
+        if output.suffix.lower() != ".json" or output.is_relative_to(self._service.root):
+            raise ValueError("Сохраните JSON-экспорт вне папки установки")
+        def export():
+            service, config = self._progress_service(region)
+            return {"exported": str(service.export(output, config.data.region_id))}
+        return self._background(export)
+
+    def choose_progress_import(self, region, replace=False):
+        if self._operation["busy"] or not isinstance(replace, bool):
+            raise ValueError("Дождитесь завершения операции")
+        import webview
+        paths = self._window.create_file_dialog(webview.FileDialog.OPEN, allow_multiple=False, file_types=("JSON (*.json)",))
+        if not paths:
+            return None
+        self._import_plan = None
+        def preview():
+            service, config = self._progress_service(region)
+            plan = service.preview_import(paths[0], config.data.region_id, replace=replace)
+            self._import_plan = service, plan
+            return {"import_preview": plan.to_dict()}
+        return self._background(preview)
+
+    def apply_progress_import(self, confirmed):
+        if confirmed is not True or self._import_plan is None:
+            raise ValueError("Просмотрите импорт и подтвердите остановку GPS")
+        service, plan = self._import_plan
+        self._import_plan = None
+        return self._background(lambda: service.apply_import(plan))
+
+    def open_diagnostics(self):
+        folder = self._service.root / "datasets/local/diagnostics"
+        folder.mkdir(parents=True, exist_ok=True)
+        os.startfile(folder)
+        return True
+
 
 def run_launcher(root: str | Path | None = None) -> int:
     try:
@@ -221,6 +337,10 @@ def run_launcher(root: str | Path | None = None) -> int:
         webview.start(gui="edgechromium", private_mode=True)
         if bridge._launch_args:
             spawn_command(service.root, bridge._launch_args)
+        if bridge._launch_installation:
+            root = bridge._launch_installation
+            subprocess.Popen([str(root / "GenshinNavigator.exe"), "launcher"], cwd=root,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return 0
     except Exception as error:
         message = (f"Не удалось открыть окно Navigator: {error}\n"
