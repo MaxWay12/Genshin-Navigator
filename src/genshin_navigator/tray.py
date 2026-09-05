@@ -30,12 +30,13 @@ class PystrayBackend:
         menu = pystray.Menu(
             pystray.MenuItem("Настройки", lambda _icon, _item: emit(HotkeyAction.OPEN_SETTINGS)),
             pystray.MenuItem(
-                "Pause / Resume", lambda _icon, _item: emit(HotkeyAction.TOGGLE_PAUSE)
+                "Пауза / продолжить", lambda _icon, _item: emit(HotkeyAction.TOGGLE_PAUSE)
             ),
             pystray.MenuItem(
-                "Show HUD", lambda _icon, _item: emit(HotkeyAction.SHOW_HUD), default=True
+                "Показать HUD", lambda _icon, _item: emit(HotkeyAction.SHOW_HUD), default=True
             ),
-            pystray.MenuItem("Exit", lambda _icon, _item: emit(HotkeyAction.QUIT)),
+            pystray.MenuItem("Кнопки / закрепить окно", lambda _icon, _item: emit(HotkeyAction.TOGGLE_LOCK)),
+            pystray.MenuItem("Выход", lambda _icon, _item: emit(HotkeyAction.QUIT)),
         )
         self._icon = pystray.Icon(
             "genshin-navigator", self._image(), "Genshin Navigator", menu

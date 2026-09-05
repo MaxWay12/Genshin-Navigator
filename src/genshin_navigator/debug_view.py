@@ -100,6 +100,12 @@ class DebugMapView:
         self._hint_image_path: Path | None = None
         self._hint_image: np.ndarray | None = None
         self._locked = True
+        self._hud_hits = ()
+        self._mouse_hover = None
+        self._mouse_collect = False
+        self._mouse_pressed_action = None
+        self._last_navigation = None
+        self._canvas_size = (hud_width, hud_height)
         self._target_page = 0
         self._target_section = "available"
         self._target_hits = []
@@ -285,6 +291,8 @@ class DebugMapView:
         self._show_toast(message, duration)
 
     def _dispatch_action(self, action: HotkeyAction, navigation: NavigationSnapshot | None) -> None:
+        if action is not HotkeyAction.COLLECTED_HOLD:
+            self._mouse_collect = False
         if action is HotkeyAction.OPEN_SETTINGS:
             self.settings_requested = True
             self._hold.cancel()
@@ -368,16 +376,45 @@ class DebugMapView:
             if self._hotkeys is not None
             else bool(ctypes.windll.user32.GetAsyncKeyState(self.VK_NUMPAD5) & 0x8000)
         )
+        if getattr(self, "_mouse_collect", False):
+            if self._mouse_still_on_collect():
+                key_down = True
+            else:
+                self._mouse_collect = False
+                self._hold.cancel()
         status = self._hold.update(
             key_down=key_down, target_id=target_id,
             available=bool(navigation and navigation.available),
         )
         self._hold_progress = status.progress if status.active else 0.0
         if status.cancelled:
+            self._mouse_collect = False
             self._show_toast("Отметка отменена")
         elif status.confirmed and self._navigation is not None:
+            self._mouse_collect = False
             self._navigation.mark_collected()
             self._show_toast("Сохранено локально · ожидает sync")
+
+    def _mouse_still_on_collect(self) -> bool:
+        if self._locked or self._mode != "hud":
+            return False
+        try:
+            user32 = ctypes.windll.user32
+            if not user32.GetAsyncKeyState(0x01) & 0x8000:
+                return False
+            if int(user32.GetForegroundWindow() or 0) != self._window_handle():
+                return False
+            cursor = (ctypes.c_long * 2)()
+            if not user32.GetCursorPos(cursor):
+                return False
+            left, top, width, height = cv2.getWindowImageRect(self.window_name)
+            if width <= 0 or height <= 0:
+                return False
+            x = (cursor[0] - left) * self._canvas_size[0] / width
+            y = (cursor[1] - top) * self._canvas_size[1] / height
+            return any(hit.action is HotkeyAction.COLLECTED_HOLD and hit.contains(x, y) for hit in self._hud_hits)
+        except (AttributeError, OSError, cv2.error):
+            return False
 
     def show(
         self,
@@ -389,6 +426,7 @@ class DebugMapView:
         layer_id = snapshot.position.layer_id if snapshot.position is not None else snapshot.map_layer_id
         self._select_layer(layer_id)
         navigation = self._navigation.update(snapshot) if self._navigation else None
+        self._last_navigation = navigation
         key = cv2.waitKey(1) & 0xFF
         local_actions = {
             ord("n"): HotkeyAction.NEXT, ord("N"): HotkeyAction.NEXT,
@@ -434,6 +472,7 @@ class DebugMapView:
         else:
             canvas = self._render_map(snapshot, navigation, fps, paused_reason, performance)
         cv2.imshow(self.window_name, canvas)
+        self._canvas_size = (canvas.shape[1], canvas.shape[0])
         try:
             visible = cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) >= 1
         except cv2.error:
@@ -447,36 +486,16 @@ class DebugMapView:
         paused_reason: str | None,
         performance: PerformanceSnapshot | None = None,
     ) -> np.ndarray:
-        panel = np.full((self.hud_height, self.hud_width, 3), (24, 27, 31), np.uint8)
+        from .hud_renderer import render_compact
         presentation = build_hud_presentation(snapshot, navigation, self._layer_labels)
-        accent = (85, 220, 110) if presentation.available and not paused_reason else (145, 145, 145)
-        cv2.rectangle(panel, (0, 0), (5, self.hud_height), accent, -1)
-        self._put_unicode_text(panel, presentation.target[:38], (16, 12), (238, 238, 238), large=True)
-        self._put_unicode_text(panel, presentation.distance, (16, 44), accent)
-        self._put_unicode_text(panel, presentation.layer[:43], (16, 70), (190, 195, 200))
-        self._put_unicode_text(panel, "ПАУЗА" if paused_reason else presentation.state, (16, 96), accent)
-        navigation_controller = getattr(self, "_navigation", None)
-        if navigation_controller is not None and self.hud_height >= 170:
-            summary = navigation_controller.summary
-            pending = int(self._progress_status().get("pending_sync_count", 0))
-            summary_text = (
-                f"{summary.target_filter}: {summary.collected}/{summary.total} · "
-                f"осталось {summary.remaining} · skip {summary.session_skipped} · sync {pending}"
-            )
-            self._put_unicode_text(panel, summary_text[:55], (16, 119), (175, 180, 185))
-        if performance is not None and self.hud_height >= 170:
-            processing = "—" if performance.processing_ms is None else f"{performance.processing_ms:.0f}ms"
-            perf_text = f"CV {processing} · {performance.cv_fps:.1f} fps · {performance.search_mode} · {performance.mode}"
-            self._put_unicode_text(panel, perf_text, (16, 141), (130, 185, 220))
-        self._put_unicode_text(panel, "4/6 или Ctrl+Alt+←/→ · 5/Space собрать · 9/Q выход", (16, self.hud_height - 21), (145, 150, 155))
-        if presentation.bearing_degrees is not None:
-            self._draw_hud_arrow(panel, presentation.bearing_degrees, accent)
-        if self._hold_progress > 0:
-            width = round((self.hud_width - 12) * self._hold_progress)
-            cv2.rectangle(panel, (6, self.hud_height - 5), (6 + width, self.hud_height - 2), (50, 190, 255), -1)
-        if time.monotonic() < self._toast_until:
-            cv2.rectangle(panel, (7, 91), (self.hud_width - 7, 119), (42, 45, 50), -1)
-            self._put_unicode_text(panel, self._toast[:45], (14, 95), (245, 220, 170))
+        panel, self._hud_hits = render_compact(
+            presentation, self.hud_width, self.hud_height,
+            paused=bool(paused_reason), locked=getattr(self, "_locked", True),
+            hover=getattr(self, "_mouse_hover", None),
+            hold=self._hold_progress,
+            toast=self._toast if time.monotonic() < self._toast_until else "",
+            performance=performance,
+        )
         return panel
 
     def _progress_status(self) -> dict[str, object]:
@@ -518,7 +537,7 @@ class DebugMapView:
         performance: PerformanceSnapshot | None = None,
     ) -> np.ndarray:
         panel = np.full(
-            (self.details_height, self.details_width, 3), (24, 27, 31), np.uint8
+            (self.details_height, self.details_width, 3), (22, 24, 15), np.uint8
         )
         compact = self._render_hud(snapshot, navigation, paused_reason, performance)
         header_width = min(self.details_width, compact.shape[1])
@@ -575,8 +594,14 @@ class DebugMapView:
             self._put_unicode_text(
                 panel, line, (text_x, text_y + index * 22), (220, 222, 224)
             )
-        footer = f"Num1/3 или Ctrl+Alt+PgUp/PgDn · стр. {self._details_page + 1}/{pages} · Num7/H закрыть"
-        self._put_unicode_text(panel, footer, (16, self.details_height - 25), (145, 150, 155))
+        footer = f"‹ Назад       {self._details_page + 1} / {pages}       Вперёд ›"
+        cv2.rectangle(panel, (8, self.details_height - 30), (self.details_width - 8, self.details_height - 5), (32, 40, 26), -1)
+        self._put_unicode_text(panel, footer, (16, self.details_height - 27), (175, 200, 183))
+        from .hud_renderer import HudButton
+        self._hud_hits = tuple(self._hud_hits) + (
+            HudButton(HotkeyAction.PREVIOUS_PAGE, (8, self.details_height - 30, self.details_width // 2, self.details_height - 5), "", "", self._details_page > 0),
+            HudButton(HotkeyAction.NEXT_PAGE, (self.details_width // 2, self.details_height - 30, self.details_width - 8, self.details_height - 5), "", "", self._details_page < pages - 1),
+        )
         if time.monotonic() < self._toast_until:
             cv2.rectangle(panel, (7, self.details_height - 62), (self.details_width - 7, self.details_height - 34), (42, 45, 50), -1)
             self._put_unicode_text(panel, self._toast[:65], (14, self.details_height - 58), (245, 220, 170))
@@ -635,6 +660,29 @@ class DebugMapView:
         return canvas
 
     def _on_mouse(self, event, x, y, flags, param=None):
+        if self._mode == "hud":
+            self._mouse_hover = (x, y)
+            if self._locked:
+                self._mouse_collect = False
+                return
+            hit = next((hit for hit in self._hud_hits if hit.enabled and hit.contains(x, y)), None)
+            if event == cv2.EVENT_MOUSEMOVE and self._mouse_collect:
+                if hit is None or hit.action is not HotkeyAction.COLLECTED_HOLD:
+                    self._mouse_collect = False
+                    self._hold.cancel()
+            if event == cv2.EVENT_LBUTTONDOWN:
+                self._mouse_pressed_action = hit.action if hit else None
+                if hit and hit.action is HotkeyAction.COLLECTED_HOLD:
+                    nav = self._last_navigation
+                    self._mouse_collect = self._hold.begin(nav.target.id if nav and nav.target else None, available=bool(nav and nav.available))
+            elif event == cv2.EVENT_LBUTTONUP:
+                if self._mouse_collect:
+                    self._mouse_collect = False
+                    self._hold.cancel()
+                if hit and hit.action == self._mouse_pressed_action and hit.action is not HotkeyAction.COLLECTED_HOLD:
+                    self._dispatch_action(hit.action, self._last_navigation)
+                self._mouse_pressed_action = None
+            return
         if event != cv2.EVENT_LBUTTONUP or self._mode != "map" or self._locked or self._navigation is None:
             return
         if x < self.base.shape[1] and y < self.base.shape[0]:

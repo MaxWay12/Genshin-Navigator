@@ -2,6 +2,9 @@
 
 ## v0.1.4-alpha — local candidate, not published
 
+- Refresh compact/expanded HUD styling: large distance, north-up compass, readable status and mouse buttons/tooltips.
+- Safe mouse-hold collection, clickable hint pagination, tray lock/unlock and Russian tray labels; global shortcuts unchanged.
+
 - Includes full experimental Sumeru from the unpublished 0.1.3 candidate.
 - Unicode-safe atomic image I/O; nearly-square minimap validation and preview confirmation.
 - Single localization worker and a latest-result mailbox; HUD remains responsive and expired fixes become unavailable.

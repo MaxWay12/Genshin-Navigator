@@ -36,7 +36,7 @@ def build_hud_presentation(
     available = bool(navigation is not None and navigation.available)
     bearing = None
     if navigation is not None and navigation.target is not None:
-        target = f"{navigation.target.name} · {navigation.target.kind}"
+        target = navigation.target.name
         if not available:
             distance = "позиция уточняется"
         elif navigation.distance_m is None:
