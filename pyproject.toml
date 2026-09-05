@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genshin-navigator"
-version = "0.1.3a1"
+version = "0.1.4a1"
 description = "Passive minimap-based position estimator"
 readme = "README.md"
 license = {file = "LICENSE"}

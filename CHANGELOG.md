@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.4-alpha — local candidate, not published
+
+- Includes full experimental Sumeru from the unpublished 0.1.3 candidate.
+- Unicode-safe atomic image I/O; nearly-square minimap validation and preview confirmation.
+- Single localization worker and a latest-result mailbox; HUD remains responsive and expired fixes become unavailable.
+- Stable target ordering, per-space selection persistence, map/list selection and restoring skipped/hidden POI.
+- Manual public release checks, ZIP/SHA-256 validation and side-by-side update with staged data transfer.
+- Launcher data status, progress export/import and local diagnostics access.
+- Formal full-Sumeru gameplay acceptance and external tester CPU verification remain pending.
+
 ## v0.1.3-alpha — candidate, not published
 
 - Add experimental full Sumeru surface and official underground overlays.

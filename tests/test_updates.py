@@ -6,6 +6,7 @@ import stat
 import tempfile
 import unittest
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -61,11 +62,17 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((self.old / "config.json").read_bytes(), original)
         self.assertTrue((self.dest / "GenshinNavigator.exe").is_file())
 
-    def test_wrong_checksum_and_cancel_leave_destination_empty(self):
+    def test_wrong_checksum_leaves_destination_empty(self):
         self.checksum = b"0" * 64 + b"  " + self.release.archive_name.encode()
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             self.service.apply(self.release, self.dest, stopped=True)
         self.assertFalse(any(self.dest.iterdir()))
+
+    def test_missing_checksum_and_cancellation_never_download(self):
+        self.service.opener = Mock()
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            self.service.apply(replace(self.release, checksum_url=""), self.dest, stopped=True)
+        self.service.opener.assert_not_called()
         self.service.cancelled.set()
         with self.assertRaises(InterruptedError):
             self.service.apply(self.release, self.dest, stopped=True)

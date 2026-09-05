@@ -86,6 +86,27 @@ class LauncherTests(unittest.TestCase):
         bridge._window = Mock()
         self.assertFalse([key for key in vars(bridge) if not key.startswith("_")])
 
+    def test_import_needs_preview_and_confirmation(self):
+        bridge = LauncherBridge(self.service)
+        with self.assertRaises(ValueError):
+            bridge.apply_progress_import(True)
+        service, plan = Mock(), Mock()
+        bridge._import_plan = service, plan
+        with self.assertRaises(ValueError):
+            bridge.apply_progress_import(False)
+        service.apply_import.assert_not_called()
+        self.assertEqual(bridge._import_plan, (service, plan))
+
+    def test_update_cannot_launch_before_successful_preparation(self):
+        bridge = LauncherBridge(self.service)
+        bridge._window = Mock()
+        with self.assertRaises(ValueError):
+            bridge.launch_updated()
+        bridge._window.destroy.assert_not_called()
+        bridge._updater = Mock()
+        bridge.cancel_update()
+        bridge._updater.cancelled.set.assert_called_once()
+
     def test_webview_failure_is_clear(self):
         with patch.dict("sys.modules", {"webview": None}), patch("sys.platform", "linux"):
             self.assertEqual(run_launcher(self.root), 1)

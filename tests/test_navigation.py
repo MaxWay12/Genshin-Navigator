@@ -50,6 +50,12 @@ class NavigationTests(unittest.TestCase):
         self.controller.refresh_candidates()
         self.assertEqual(self.controller.candidates()[0].poi.id, "far")
 
+    def test_selected_target_stays_pinned_outside_radius(self):
+        self.controller.max_target_distance_m = 40
+        self.controller.update(snapshot(self.surface))
+        self.controller.update(snapshot(position("surface", CoordinateSpace.SURFACE_ATLAS, 100, 0)))
+        self.assertEqual(self.controller.current_target.id, "near")
+
     def test_explicit_selection_and_restore_are_layer_scoped(self):
         self.controller.update(snapshot(self.surface))
         self.assertFalse(self.controller.select_target("floor"))

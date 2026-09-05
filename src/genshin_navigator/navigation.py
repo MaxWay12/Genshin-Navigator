@@ -163,7 +163,7 @@ class NavigationController:
                 and self.calibration.supports_region(position.region_id)
                 else None
             )
-            if meters is None or meters <= self.max_target_distance_m:
+            if meters is None or meters <= self.max_target_distance_m or poi.id == self._selected_by_space.get(self._key(position)):
                 filtered.append((poi, distance))
         return filtered
 
@@ -228,6 +228,7 @@ class NavigationController:
             self.blacklisted_ids.discard(identifier)
         else:
             return False
+        self._orders.pop(self._active_key, None)
         self._save_preferences()
         return True
 
