@@ -73,7 +73,7 @@ class LauncherTests(unittest.TestCase):
             bridge.start("sumeru", self.values())
             bridge._window.destroy.assert_called_once()
             spawn.assert_not_called()
-        self.assertEqual(bridge._launch_args[-1], str(self.root / "config.sumeru-full.json"))
+        self.assertEqual(Path(bridge._launch_args[-1]).resolve(), (self.root / "config.sumeru-full.json").resolve())
 
     def test_spawn_uses_arguments_without_shell(self):
         with patch("genshin_navigator.launcher.subprocess.Popen") as popen:
@@ -144,7 +144,7 @@ class TransferTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT * FROM progress").fetchall(), [("hoyolab:1",1,0),("hoyolab:2",0,1)])
         self.assertEqual(self.db.read_bytes(), before)
         self.assertFalse((self.dest / "datasets/local/auth").exists())
-        self.assertEqual(json.loads((self.dest / "config.json").read_text())["map_path"], str(self.dest / "datasets/local/references/hoyolab_fontaine_full_n1/atlas.png"))
+        self.assertEqual(Path(json.loads((self.dest / "config.json").read_text())["map_path"]).resolve(), (self.dest / "datasets/local/references/hoyolab_fontaine_full_n1/atlas.png").resolve())
 
     def test_confirmation_and_existing_data(self):
         with self.assertRaises(ValueError): self.transfer.apply(self.source)
@@ -171,7 +171,7 @@ class TransferTests(unittest.TestCase):
         import os
         replace = os.replace
         def fail_config(src, dst):
-            if Path(dst) == self.dest / "config.json": raise OSError("publish interrupted")
+            if Path(dst).resolve() == (self.dest / "config.json").resolve(): raise OSError("publish interrupted")
             return replace(src, dst)
         with patch("genshin_navigator.portable_transfer.os.replace", side_effect=fail_config):
             with self.assertRaises(OSError): self.transfer.apply(self.source, stopped=True)

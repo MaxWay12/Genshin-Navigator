@@ -57,7 +57,7 @@ class UpdateTests(unittest.TestCase):
         result = self.service.apply(self.release, self.dest, stopped=True)
         self.assertTrue(result["ready"])
         expected = json.loads(original)
-        expected["map_path"] = str(self.dest / "datasets/local/references/atlas.png")
+        expected["map_path"] = str((self.dest / "datasets/local/references/atlas.png").resolve())
         self.assertEqual(json.loads((self.dest / "config.json").read_text(encoding="utf-8")), expected)
         self.assertEqual((self.old / "config.json").read_bytes(), original)
         self.assertTrue((self.dest / "GenshinNavigator.exe").is_file())
