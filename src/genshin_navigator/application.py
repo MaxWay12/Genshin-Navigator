@@ -238,128 +238,40 @@ class LiveApplication:
         )
 
     def run(self) -> int:
-        config, locator = self.config, self.locator
+        from .live_worker import LocalizationWorker, visible_snapshot
+        config = self.config
         if config.performance.opencv_threads:
             cv2.setNumThreads(config.performance.opencv_threads)
-        tracker = LiveTracker(config.tracker)
-        scheduler = LocalizationScheduler(config.performance)
-        performance = PerformanceMonitor(config.performance.mode)
         data = load_runtime_data(config)
-        recorder = FailureRecorder(
-            config.failure_recorder, self._diagnostic_context(data)
-        )
-        gate = (
-            MinimapScreenGate.from_config(config.screen_gate)
-            if config.screen_gate.enabled else None
-        )
-        view = self._view(data, recorder.request_manual_report)
+        recorder = FailureRecorder(config.failure_recorder, self._diagnostic_context(data))
+        gate = MinimapScreenGate.from_config(config.screen_gate) if config.screen_gate.enabled else None
+        worker = LocalizationWorker(config, self.locator, gate, recorder)
+        view = self._view(data, worker.request_report)
+        snapshot = LiveTracker(config.tracker).pause(time.perf_counter(), "starting")
         previous = time.perf_counter()
-        snapshot = tracker.pause(previous, "starting")
-        was_paused = False
+        last_incident = None
+        worker.start()
         try:
             while True:
                 started = time.perf_counter()
+                worker.set_paused(view.paused)
+                result = worker.latest()
+                if result is not None:
+                    snapshot = visible_snapshot(result, started, config.tracker.lost_timeout_seconds)
+                    if result.incident is not None and result.incident != last_incident:
+                        last_incident = result.incident
+                        view.notify(f"Diagnostic: {last_incident.parent.name}/{last_incident.name}", 6.0)
                 if view.paused:
-                    now = time.perf_counter()
-                    snapshot = tracker.pause(now, "user_paused")
-                    performance.idle("paused")
-                    elapsed = max(now - previous, 1e-6)
-                    previous = now
-                    if not view.show(
-                        snapshot,
-                        1.0 / elapsed,
-                        paused_reason="user_paused",
-                        performance=(performance.snapshot if config.performance.show_metrics else None),
-                    ):
-                        return 0
-                    was_paused = True
-                    self._wait(started, config.performance.paused_interval_seconds)
-                    continue
-                if was_paused:
-                    scheduler.force_next()
-                    was_paused = False
-                now = time.perf_counter()
-                if not scheduler.due(now, tracker.state):
-                    performance.idle("waiting")
-                    elapsed = max(now - previous, 1e-6)
-                    previous = now
-                    if not view.show(
-                        snapshot,
-                        1.0 / elapsed,
-                        performance=(performance.snapshot if config.performance.show_metrics else None),
-                    ):
-                        return 0
-                    self._wait(started)
-                    continue
-                cv_started = time.perf_counter()
-                minimap = grab_roi(config.roi)
-                gate_result = gate.check(minimap) if gate else None
-                scheduler.mark_run(time.perf_counter())
-                if gate_result is not None and not gate_result.minimap_present:
-                    if isinstance(locator, PyramidMatcher):
-                        locator.reset_continuity()
-                    now = time.perf_counter()
-                    reason = gate_result.reason or "minimap_not_visible"
-                    snapshot = tracker.pause(now, reason)
-                    performance.record(
-                        now,
-                        (time.perf_counter() - cv_started) * 1000.0,
-                        "gate",
-                    )
-                    elapsed = max(now - previous, 1e-6)
-                    previous = now
-                    if not view.show(
-                        snapshot,
-                        1.0 / elapsed,
-                        paused_reason=reason,
-                        performance=(performance.snapshot if config.performance.show_metrics else None),
-                    ):
-                        return 0
-                    self._wait(started)
-                    continue
-                hint = tracker.position_hint
-                search_mode = "local" if (
-                    config.local_search.enabled
-                    and hint is not None
-                    and isinstance(locator, PyramidMatcher)
-                ) else "global"
-                localization = (
-                    locator.locate_near(minimap, hint, config.local_search)
-                    if config.local_search.enabled
-                    and hint is not None
-                    and isinstance(locator, PyramidMatcher)
-                    else locator.locate(minimap)
-                )
-                now = time.perf_counter()
-                snapshot = tracker.update(localization, now)
-                scheduler.observe_result(found=localization.found, state=snapshot.state)
-                performance.record(
-                    now,
-                    (time.perf_counter() - cv_started) * 1000.0,
-                    search_mode,
-                )
-                was_active = recorder.active
-                incident = recorder.observe(minimap, localization, snapshot, now)
-                if recorder.active and not was_active:
-                    print("tracking interruption; collecting minimap diagnostics...", flush=True)
-                if incident is not None:
-                    print(f"tracking diagnostic saved: {incident}", flush=True)
-                    view.notify(
-                        f"Diagnostic: {incident.parent.name}/{incident.name}", 6.0
-                    )
-                elapsed = max(now - previous, 1e-6)
-                previous = now
-                if not view.show(
-                    snapshot,
-                    1.0 / elapsed,
-                    performance=(performance.snapshot if config.performance.show_metrics else None),
-                ):
+                    snapshot = replace(snapshot, stale=True, accepted=False, reason="user_paused")
+                elapsed = max(started - previous, 1e-6)
+                previous = started
+                if not view.show(snapshot, 1.0 / elapsed,
+                                 paused_reason="user_paused" if view.paused else None,
+                                 performance=result.performance if result and config.performance.show_metrics else None):
                     return 0
-                self._wait(started)
+                self._wait(started, 0.05)
         finally:
-            incident = recorder.close()
-            if incident is not None:
-                print(f"partial tracking diagnostic saved: {incident}", flush=True)
+            worker.close()
             view.close()
             if getattr(view, "settings_requested", False):
                 from .launcher import spawn_command, installation_root
