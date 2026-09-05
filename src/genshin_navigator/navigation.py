@@ -142,7 +142,7 @@ class NavigationController:
                 world_distance * self.calibration.meters_per_world_unit
                 if world_distance is not None
                 and self.calibration is not None
-                and self.calibration.region_id == position.region_id
+                and self.calibration.supports_region(position.region_id)
                 else None
             )
             if meters is None or meters <= self.max_target_distance_m:
@@ -270,7 +270,7 @@ class NavigationController:
         if (
             world_distance is not None
             and self.calibration is not None
-            and self.calibration.region_id == position.region_id
+            and self.calibration.supports_region(position.region_id)
         ):
             distance_m = world_distance * self.calibration.meters_per_world_unit
         self._last_snapshot = NavigationSnapshot(

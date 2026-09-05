@@ -12,7 +12,7 @@ from pathlib import Path
 from .config import load_config
 
 
-CONFIGS = ("config.json", "config.sumeru.json")
+CONFIGS = ("config.json", "config.sumeru.json", "config.sumeru-full.json")
 DATA_DIRS = ("data", "poi", "calibration", "ui", "references", "cache")
 
 

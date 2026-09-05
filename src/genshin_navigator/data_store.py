@@ -47,6 +47,8 @@ class SqliteDataProvider:
         backup_retention: int = 5,
     ):
         self.database = Path(database)
+        self.backup_dir = Path(backup_dir) if backup_dir else self.database.parent / "backups"
+        self.backup_retention = backup_retention
         self.database.parent.mkdir(parents=True, exist_ok=True)
         if self.database.exists() and self.database.stat().st_size:
             with closing(sqlite3.connect(self.database)) as connection:
@@ -106,8 +108,11 @@ class SqliteDataProvider:
         )
         if progress is not None:
             sqlite_progress = self.progress()
+            with closing(self._connect()) as connection:
+                existing = {row[0] for row in connection.execute("SELECT poi_id FROM progress")}
             for poi_id in progress.collected_ids:
-                sqlite_progress.mark_collected(poi_id)
+                if poi_id not in existing:
+                    sqlite_progress.mark_collected(poi_id)
 
     def replace_content(
         self,
@@ -137,9 +142,20 @@ class SqliteDataProvider:
             key = (poi.region_id, poi.layer_id, poi.coordinate_space)
             if poi.region_id != region_id or key not in keys:
                 raise ValueError(f"POI {poi.id} references an unknown map space")
+        if len({p.id for p in poi_items}) != len(poi_items):
+            raise ValueError("Duplicate POI IDs in content update")
+        upgrading = region_id == "sumeru" and not self.is_empty("sumeru_desert") and self.is_empty("sumeru")
+        if upgrading:
+            DatabaseBackupManager(self.database, self.backup_dir, self.backup_retention).create("before_sumeru_upgrade")
+        if region_id == "sumeru_desert" and not self.is_empty("sumeru"):
+            raise ValueError("Sumeru was upgraded; use the full Sumeru config, not the legacy desert catalog")
         timestamp = fetched_at or datetime.now(timezone.utc).isoformat()
         with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
+            if region_id == "sumeru":
+                # Missing legacy POI remain archival with their ORIGINAL space;
+                # never invent new coordinates for points absent upstream.
+                connection.execute("UPDATE pois SET active=0 WHERE region_id='sumeru_desert'")
             connection.execute("INSERT OR IGNORE INTO regions VALUES (?)", (region_id,))
             connection.executemany(
                 """

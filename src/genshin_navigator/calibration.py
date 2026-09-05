@@ -42,6 +42,10 @@ class DistanceCalibration:
 
     FORMAT_VERSION = 1
 
+    def supports_region(self, region_id: str) -> bool:
+        # Both Sumeru catalog generations use the same HoYoLAB world unit.
+        return self.region_id == region_id or {self.region_id, region_id} == {"sumeru", "sumeru_desert"}
+
     def __post_init__(self) -> None:
         if not self.region_id.strip():
             raise ValueError("Calibration region_id must not be empty")
