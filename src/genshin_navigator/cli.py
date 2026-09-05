@@ -43,7 +43,7 @@ from .progress_sync import (
 )
 from .progress_backup import ProgressTransferService
 from .scenario import evaluate_scenario, record_scenario
-from .scenario_annotation import annotate_scenario
+from .scenario_annotation import annotate_scenario, annotation_image
 from .region_manifest import load_region_manifest
 from .asset_setup import region_asset_status, setup_region
 from .roi_setup import check_config_roi, configure_roi
@@ -663,6 +663,7 @@ def main(argv: list[str] | None = None) -> int:
             atlas_path = config.debug_map_path or config.map_path
             if atlas_path is None:
                 raise ValueError("annotate-scenario requires debug_map_path or map_path")
+            atlas_path = annotation_image(atlas_path, config.pyramid_path, args.layer)
             saved = annotate_scenario(
                 args.scenario,
                 atlas_path,

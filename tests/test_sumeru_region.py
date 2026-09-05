@@ -17,10 +17,20 @@ from genshin_navigator.position import CoordinateSpace
 from genshin_navigator.region_sources import fetch_surface_metadata, regional_groups, surface_bounds
 from genshin_navigator.surface_sections import build_surface_sections
 from genshin_navigator.sumeru_upgrade import upgrade_config
+from genshin_navigator.scenario_annotation import annotation_image
 from genshin_navigator.underground_pyramid import build_underground_pyramid
 
 
 class SumeruRegionTests(unittest.TestCase):
+    def test_floor_annotations_use_local_image(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / "pyramid.json"
+            manifest.write_text(json.dumps({"levels": [{"image": "floor.png", "map_layer_id": "floor1", "coordinate_space": "layer_local"}]}))
+            self.assertEqual(annotation_image(root / "atlas.png", manifest, "floor1"), root / "floor.png")
+            with self.assertRaises(ValueError):
+                annotation_image(root / "atlas.png", manifest, "missing")
+
     def test_metadata_requires_revision_and_origin(self):
         payload = {"all_map_list": [{"id": 2, "detail_v2": {"origin": [10, 20], "map_version": "a" * 32}}]}
         with patch("genshin_navigator.region_sources._fetch", return_value=payload):

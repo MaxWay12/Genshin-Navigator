@@ -24,7 +24,7 @@ The counts are a snapshot of the existing categories returned by the public API,
 
 ## Automated checks
 
-- 218 unit tests passed during implementation (rerun before release).
+- 219 unit tests passed during implementation (rerun before release).
 - Full locator loads 96 references: 19 surface sections and 77 underground floors. Three synthetic surface crops matched their canonical positions within 0.04 px; these are geometry smoke tests, not gameplay accuracy measurements.
 - Fontaine golden suite: PASS, surface teleport coverage 98.51%, reacquire 1.50 s, false locks 0. Its old manifest lacks coordinate checkpoints: this is a regression guard, not a full positional accuracy proof.
 - Legacy Sumeru recovery suite: 4/4 gating PASS; four existing informational failures preserved. Recovery-only, no positional ground truth.
@@ -42,6 +42,7 @@ python -m unittest discover -s tests
 Record eight scenarios using the full Sumeru config: forest, city, ordinary desert, sparse ruins, forest/desert teleport, forest cave, desert dungeon, floor transition.
 Use the example suite `benchmarks/sumeru-full.example.json`; crops belong only in `datasets/local/scenarios/sumeru_full`.
 Each scenario needs visible/optional phases and at least two position checkpoints; moving scenarios need start/middle/end. Do not relabel new failures informational to ship.
+For underground checkpoints, use `annotate-scenario ... --layer <official-layer-id>`; the annotator selects that floor's image and saves floor-local coordinates. Split annotation passes by layer for transitions.
 Required KPI: zero false locks/wrong layers/one-frame switches; coverage >=95%; longest unavailable <=2s; reacquire P95 <=3s; stationary jitter P95 <=5px.
 
 Compare balanced and low_cpu on identical recordings, including process memory and CV time. The tester's earlier 60% CPU issue is **not verified resolved**.

@@ -12,6 +12,21 @@ from .capture import load_image
 from .scenario import load_scenario
 
 
+def annotation_image(surface: Path, pyramid: Path | None, layer: str) -> Path:
+    """Checkpoints on independent floors must use floor pixels, not atlas pixels."""
+    if layer == "surface":
+        return surface
+    if pyramid is None:
+        raise ValueError("Underground annotation requires a reference pyramid")
+    raw = json.loads(pyramid.read_text(encoding="utf-8"))
+    levels = [item for item in raw["levels"] if item.get("map_layer_id") == layer
+              and item.get("coordinate_space") == "layer_local"]
+    if len(levels) != 1:
+        raise ValueError("Unknown or ambiguous annotation floor")
+    image = Path(levels[0]["image"])
+    return image if image.is_absolute() else pyramid.parent / image
+
+
 @dataclass(frozen=True)
 class AtlasViewport:
     left: int
