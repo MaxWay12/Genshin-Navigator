@@ -28,6 +28,7 @@ class HotkeyAction(str, Enum):
     CYCLE_TARGET_FILTER = "cycle_target_filter"
     BLACKLIST_TARGET = "blacklist_target"
     SHOW_HUD = "show_hud"
+    OPEN_SETTINGS = "open_settings"
 
 
 DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {

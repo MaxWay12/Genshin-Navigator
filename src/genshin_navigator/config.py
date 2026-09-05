@@ -299,6 +299,7 @@ class NavigationConfig:
     navigation_state_path: Path = Path("datasets/local/ui/navigation_state.json")
     collected_hold_seconds: float = 1.0
     global_hotkeys: bool = True
+    numpad_enabled: bool = True
     tray_enabled: bool = True
     max_target_distance_m: float | None = None
     hotkeys: HotkeyConfig = field(default_factory=HotkeyConfig)

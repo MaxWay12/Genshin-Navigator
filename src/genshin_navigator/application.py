@@ -161,7 +161,7 @@ class LiveApplication:
                 HotkeyAction.NEXT_PAGE: config.poi_guidance.next_page,
             })
         hotkeys: dict[HotkeyAction, list[HotkeyBinding]] = {
-            action: [HotkeyBinding(virtual_key)]
+            action: ([HotkeyBinding(virtual_key)] if config.navigation.numpad_enabled else [])
             for action, virtual_key in primary_hotkeys.items()
         }
         alternative = config.navigation.alternative_hotkeys
@@ -361,6 +361,9 @@ class LiveApplication:
             if incident is not None:
                 print(f"partial tracking diagnostic saved: {incident}", flush=True)
             view.close()
+            if getattr(view, "settings_requested", False):
+                from .launcher import spawn_command, installation_root
+                spawn_command(installation_root(), ["launcher"])
 
     def record_diagnostic(self, duration_seconds: float) -> Path:
         if duration_seconds <= 0:

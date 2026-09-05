@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.2-alpha — 2026-09-05
+
+- Add local styled WebView2 launcher, region readiness and settings.
+- Add independent NumPad toggle, preserve Ctrl+Alt controls and existing CLI.
+- Close launcher before GPS; return to settings from the tray.
+- Transfer previous portable data into a clean installation using SQLite Backup API and staged validation/rollback.
+- Hardware CPU validation on the external tester's computer remains pending.
+
 ## v0.1.1-alpha — 2026-09-01
 
 Alpha performance and distribution hardening patch.

@@ -281,6 +281,11 @@ class DebugMapView:
         self._show_toast(message, duration)
 
     def _dispatch_action(self, action: HotkeyAction, navigation: NavigationSnapshot | None) -> None:
+        if action is HotkeyAction.OPEN_SETTINGS:
+            self.settings_requested = True
+            self._hold.cancel()
+            self._quit_requested = True
+            return
         if action is HotkeyAction.QUIT:
             self._hold.cancel()
             self._quit_requested = True

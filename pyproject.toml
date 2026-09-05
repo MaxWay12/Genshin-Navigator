@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genshin-navigator"
-version = "0.1.1a1"
+version = "0.1.2a1"
 description = "Passive minimap-based position estimator"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -22,3 +22,6 @@ genshin-navigator = "genshin_navigator.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+genshin_navigator = ["launcher_ui/*.html"]

@@ -28,6 +28,7 @@ class PystrayBackend:
         import pystray
 
         menu = pystray.Menu(
+            pystray.MenuItem("Настройки", lambda _icon, _item: emit(HotkeyAction.OPEN_SETTINGS)),
             pystray.MenuItem(
                 "Pause / Resume", lambda _icon, _item: emit(HotkeyAction.TOGGLE_PAUSE)
             ),

@@ -57,6 +57,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    launcher = subparsers.add_parser("launcher", help="Open Navigator settings and launcher")
+    launcher.add_argument("--root", default=None)
 
     capture = subparsers.add_parser("capture", help="Save a desktop screenshot for ROI setup")
     capture.add_argument("--output", default="artifacts/screen.png")
@@ -553,6 +555,9 @@ def _run_calibration(
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "launcher":
+            from .launcher import run_launcher
+            return run_launcher(args.root)
         if args.command == "capture":
             print(save_screen(args.output))
             return 0

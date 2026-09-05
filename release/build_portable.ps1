@@ -1,11 +1,13 @@
 param(
-    [string]$Version = "v0.1.1-alpha"
+    [string]$Version = "v0.1.2-alpha",
+    [string]$EnvironmentPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-$PyInstaller = Join-Path $ProjectRoot ".venv\Scripts\pyinstaller.exe"
+if (-not $EnvironmentPath) { $EnvironmentPath = Join-Path $ProjectRoot ".venv" }
+$Python = Join-Path $EnvironmentPath "Scripts\python.exe"
+$PyInstaller = Join-Path $EnvironmentPath "Scripts\pyinstaller.exe"
 $Dist = Join-Path $ProjectRoot "dist"
 $Work = Join-Path $ProjectRoot "build\pyinstaller"
 $PackageName = "GenshinNavigator-$Version-windows-x64"
@@ -26,6 +28,7 @@ if (-not (Test-Path -LiteralPath $PyInstaller)) {
     --name GenshinNavigator `
     --paths (Join-Path $ProjectRoot "src") `
     --collect-all webview `
+    --add-data "$(Join-Path $ProjectRoot 'src\genshin_navigator\launcher_ui');genshin_navigator/launcher_ui" `
     --distpath $Dist `
     --workpath $Work `
     --specpath (Join-Path $ProjectRoot "build") `
@@ -36,6 +39,8 @@ if (Test-Path -LiteralPath $Stage) {
     Remove-Item -LiteralPath $Stage -Recurse -Force
 }
 Move-Item -LiteralPath (Join-Path $Dist "GenshinNavigator") -Destination $Stage
+& $Python (Join-Path $PSScriptRoot "write_app_metadata.py") $Stage
+if ($LASTEXITCODE -ne 0) { throw "Application version metadata failed" }
 
 function Copy-ReleaseFile([string]$Relative, [string]$Destination = $Relative) {
     $Source = Join-Path $ProjectRoot $Relative
@@ -63,9 +68,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $ReleaseNotes))) {
 Copy-ReleaseFile $ReleaseNotes
 Copy-ReleaseFile "LICENSE"
 Copy-ReleaseFile "THIRD_PARTY_NOTICES.md"
+Copy-ReleaseFile "docs/v012-validation.md"
 Copy-ReleaseFile "release/Start-Fontaine.cmd" "Start-Fontaine.cmd"
 Copy-ReleaseFile "release/Start-Sumeru-Experimental.cmd" "Start-Sumeru-Experimental.cmd"
 Copy-ReleaseFile "release/Configure-Minimap.cmd" "Configure-Minimap.cmd"
+Copy-ReleaseFile "release/Start-Navigator.cmd" "Start-Navigator.cmd"
 
 & $Python (Join-Path $ProjectRoot "scripts/collect_licenses.py") --output (Join-Path $Stage "licenses")
 if ($LASTEXITCODE -ne 0) { throw "Third-party license collection failed" }
