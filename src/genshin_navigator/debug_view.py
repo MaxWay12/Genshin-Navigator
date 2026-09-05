@@ -26,6 +26,7 @@ from .poi_guidance import HintState, PoiHintService, PoiHintSnapshot
 from .performance import PerformanceSnapshot
 from .tracker import TrackerSnapshot, TrackerState
 from .tray import TrayController
+from .target_panel import render_panel, marker_hits
 
 
 class _Rect(ctypes.Structure):
@@ -99,6 +100,10 @@ class DebugMapView:
         self._hint_image_path: Path | None = None
         self._hint_image: np.ndarray | None = None
         self._locked = True
+        self._target_page = 0
+        self._target_section = "available"
+        self._target_hits = []
+        self._overlap_ids = ()
         self._layers = {"surface": atlas}
         self._layers.update(layer_maps or {})
         self._layer_labels = {"surface": "Фонтейн · Поверхность"}
@@ -133,6 +138,7 @@ class DebugMapView:
         self.base = np.empty((0, 0, 3), dtype=np.uint8)
         self.scale = 1.0
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(self.window_name, self._on_mouse)
         try:
             cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
         except cv2.error:
@@ -214,16 +220,13 @@ class DebugMapView:
         )
 
     def _toggle_lock(self) -> None:
-        if self._mode != "hud":
-            self._show_toast("Переключитесь в HUD через Num0 или Ctrl+Alt+M")
-            return
         if self._locked:
             self._set_locked_style(False)
             self._show_toast("HUD разблокирован — перетащите окно")
         else:
             geometry = self._window_geometry()
             self._set_locked_style(True)
-            if geometry is not None:
+            if geometry is not None and self._mode == "hud":
                 self._state_store.save(WindowGeometry(geometry.x, geometry.y, self.hud_width, self.hud_height))
             self._show_toast("Положение HUD сохранено")
 
@@ -256,7 +259,7 @@ class DebugMapView:
             )
             cv2.resizeWindow(self.window_name, *size)
         elif self.base.size:
-            cv2.resizeWindow(self.window_name, self.base.shape[1], self.base.shape[0] + 112)
+            cv2.resizeWindow(self.window_name, self.base.shape[1] + 360, max(600, self.base.shape[0] + 112))
 
     def _select_layer(self, layer_id: str | None) -> None:
         selected = layer_id if layer_id in self._layers else "surface"
@@ -264,7 +267,7 @@ class DebugMapView:
             return
         image = self._layers[selected]
         source_height, source_width = image.shape[:2]
-        self.scale = min(self.max_width / source_width, self.max_height / source_height, 1.0)
+        self.scale = min((self.max_width - 360) / source_width, self.max_height / source_height, 1.0)
         size = (max(1, round(source_width * self.scale)), max(1, round(source_height * self.scale)))
         self.base = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
         self._active_layer_id = selected
@@ -620,7 +623,44 @@ class DebugMapView:
             self._draw_direction_arrow(canvas, navigation, y)
         if time.monotonic() < self._toast_until:
             self._put_unicode_text(canvas, self._toast, (12, y + 73), (245, 220, 170))
+        if self._navigation is not None:
+            rows = self._navigation.candidates(self._target_section)
+            if self._overlap_ids and self._target_section == "available":
+                rows = tuple(row for row in rows if row.poi.id in self._overlap_ids)
+            panel, self._target_hits, self._target_page = render_panel(
+                rows, self._target_section, self._target_page, canvas.shape[0],
+                self._unicode_font, locked=self._locked, overlap=bool(self._overlap_ids))
+            canvas = cv2.copyMakeBorder(canvas, 0, panel.shape[0] - canvas.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=(18, 18, 18))
+            canvas = np.concatenate((canvas, panel), axis=1)
         return canvas
+
+    def _on_mouse(self, event, x, y, flags, param=None):
+        if event != cv2.EVENT_LBUTTONUP or self._mode != "map" or self._locked or self._navigation is None:
+            return
+        if x < self.base.shape[1] and y < self.base.shape[0]:
+            matches = marker_hits(self._navigation.candidates(), x, y, self.scale)
+            if len(matches) == 1:
+                self._navigation.select_target(matches[0])
+            elif matches:
+                self._overlap_ids = matches
+                self._target_section, self._target_page = "available", 0
+            return
+        for hit in self._target_hits:
+            if not hit.contains(x - self.base.shape[1], y):
+                continue
+            if hit.action == "section":
+                self._target_section, self._target_page, self._overlap_ids = hit.value, 0, ()
+            elif hit.action == "page":
+                self._target_page = max(0, self._target_page + int(hit.value))
+            elif hit.action == "refresh":
+                self._navigation.refresh_candidates()
+                self._overlap_ids, self._target_page = (), 0
+            elif hit.action == "select":
+                self._navigation.select_target(hit.value)
+            elif hit.action == "restore":
+                if self._navigation.restore_target(hit.value, self._target_section):
+                    self._show_toast("Точка восстановлена")
+            break
 
     @staticmethod
     def _navigation_text(navigation: NavigationSnapshot | None, layer_poi_count: int) -> tuple[str, str]:

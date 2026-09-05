@@ -39,6 +39,40 @@ def poi(identifier: str, x: float, *, layer: str = "surface", space: CoordinateS
 
 
 class NavigationTests(unittest.TestCase):
+    def test_order_does_not_change_while_moving(self):
+        self.controller.update(snapshot(self.surface))
+        original = [row.poi.id for row in self.controller.candidates()]
+        self.controller.update(snapshot(position("surface", CoordinateSpace.SURFACE_ATLAS, 29, 0)))
+        self.assertEqual([row.poi.id for row in self.controller.candidates()], original)
+        self.assertEqual(self.controller.next_target().id, "middle")
+        self.controller.skip()
+        self.assertEqual(self.controller.current_target.id, "far")
+        self.controller.refresh_candidates()
+        self.assertEqual(self.controller.candidates()[0].poi.id, "far")
+
+    def test_explicit_selection_and_restore_are_layer_scoped(self):
+        self.controller.update(snapshot(self.surface))
+        self.assertFalse(self.controller.select_target("floor"))
+        self.assertTrue(self.controller.select_target("middle"))
+        self.controller.blacklist_current()
+        self.assertTrue(self.controller.restore_target("middle", "hidden"))
+        self.assertEqual(self.progress.collected_ids, set())
+        self.assertTrue(self.controller.select_target("middle"))
+        self.controller.update(snapshot(self.surface, stale=True))
+        self.assertFalse(self.controller.select_target("near"))
+        self.assertTrue(all(row.distance_m is None and not row.selectable for row in self.controller.candidates()))
+
+    def test_selected_target_survives_restart(self):
+        store = NavigationPreferencesStore(Path(self.temporary.name) / "preferences.json")
+        self.controller.preferences_store = store
+        self.controller.update(snapshot(self.surface))
+        self.controller.select_target("far")
+        restored = NavigationController(self.catalog, self.progress, target_kinds={"chest"}, preferences_store=store)
+        self.assertEqual(restored.update(snapshot(self.surface)).target.id, "far")
+        restored.mark_collected()
+        again = NavigationController(self.catalog, self.progress, target_kinds={"chest"}, preferences_store=store)
+        self.assertNotEqual(again.update(snapshot(self.surface)).target.id, "far")
+
     def setUp(self) -> None:
         self.temporary = TemporaryDirectory()
         points = [
