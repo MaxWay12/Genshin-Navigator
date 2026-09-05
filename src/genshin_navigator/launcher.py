@@ -32,26 +32,52 @@ class LauncherService:
             manifest = self.root / "release/regions.portable.json"
         entries = load_region_manifest(manifest).entries
         self.regions = {entry.id: entry for entry in entries}
-        self.paths = {entry.id: self.root / entry.config_path.name for entry in entries}
+        self.paths = {entry.id: self.root / entry.config_path.name.replace(".example.json", ".json") for entry in entries}
         self.state_path = self.root / "datasets/local/ui/launcher_state.json"
 
     def config_path(self, region: str) -> Path:
+        if region == "sumeru_desert" and "sumeru" in self.paths:
+            region = "sumeru"
         if region not in self.paths:
             raise ValueError("Неизвестный регион")
         return self.paths[region]
 
+    def _example(self, region: str) -> Path:
+        if region == "sumeru_desert" and "sumeru" in self.paths:
+            region = "sumeru"
+        name = {"fontaine": "config.example.json", "sumeru": "config.sumeru-full.example.json"}.get(
+            region, "config.sumeru.example.json")
+        return self.root / name
+
+    def _initial_config(self, region: str) -> dict:
+        if region == "sumeru_desert" and "sumeru" in self.paths:
+            region = "sumeru"
+        raw = json.loads(self._example(region).read_text(encoding="utf-8"))
+        old = self.root / "config.sumeru.json"
+        if region == "sumeru" and old.is_file():
+            from .sumeru_upgrade import upgrade_config
+            raw = upgrade_config(json.loads(old.read_text(encoding="utf-8")), raw)
+        return raw
+
     def ensure_config(self, region: str) -> Path:
         path = self.config_path(region)
         if not path.exists():
-            example = "config.example.json" if region == "fontaine" else "config.sumeru.example.json"
-            atomic_json(path, json.loads((self.root / example).read_text(encoding="utf-8")))
+            atomic_json(path, self._initial_config(region))
         return path
 
     def read(self, region: str) -> dict:
         path = self.config_path(region)
-        if not path.exists():
-            path = self.root / ("config.example.json" if region == "fontaine" else "config.sumeru.example.json")
-        config = load_config(path)
+        if path.exists():
+            config = load_config(path)
+        else:
+            fd, name = tempfile.mkstemp(suffix=".json", dir=self.root)
+            os.close(fd)
+            temporary = Path(name)
+            try:
+                atomic_json(temporary, self._initial_config(region))
+                config = load_config(temporary)
+            finally:
+                temporary.unlink(missing_ok=True)
         from .asset_setup import region_asset_status
         from .roi_setup import check_config_roi
         try:
@@ -67,8 +93,7 @@ class LauncherService:
 
     def save(self, region: str, values: dict) -> None:
         path = self.config_path(region)
-        example = self.root / ("config.example.json" if region == "fontaine" else "config.sumeru.example.json")
-        raw = json.loads((path if path.exists() else example).read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else self._initial_config(region)
         for key in ("numpad", "alternative", "tray"):
             if not isinstance(values.get(key), bool):
                 raise ValueError("Некорректный переключатель настройки")
@@ -103,6 +128,8 @@ class LauncherBridge:
         region = next(iter(self._service.regions))
         try:
             saved = json.loads(self._service.state_path.read_text(encoding="utf-8"))
+            if saved.get("region") == "sumeru_desert" and "sumeru" in self._service.regions:
+                saved["region"] = "sumeru"
             if saved.get("region") in self._service.regions:
                 region = saved["region"]
         except (OSError, ValueError):

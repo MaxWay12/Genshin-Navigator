@@ -340,6 +340,8 @@ def _sync_data(config: AppConfig, region_id: str, map_version: str | None) -> di
         area_id=config.data.area_id, label_kinds=DEFAULT_LABEL_KINDS,
     )
     metrics = build_space_metrics(surface, underground)
+    if region_id == "sumeru" and (stats["skipped_unknown_floor"] or not pois):
+        raise ValueError("Incomplete Sumeru catalog; run setup-region before syncing")
     version = content_version_for(
         labels, points, explicit_version=requested_version,
         asset_revision=str(surface.get("revision") or "") or None,
@@ -601,7 +603,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "track" and args.region is not None:
             if args.regions is None:
                 raise ValueError("track --region requires --regions")
-            config_path = load_region_manifest(args.regions).get(args.region).config_path
+            entry = load_region_manifest(args.regions).get(args.region)
+            config_path = entry.config_path
+            args.region = entry.id
         config = load_config(config_path)
         if args.command == "roi-check":
             report = check_config_roi(config).to_dict()
@@ -769,6 +773,9 @@ def main(argv: list[str] | None = None) -> int:
                     hint_refresh_after_days=config.poi_guidance.refresh_after_days,
                 )
                 report["backend"] = data.backend
+            from .asset_setup import PRESETS, region_asset_status
+            if region_id in PRESETS:
+                report["regional_assets"] = region_asset_status(config, region_id)
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0
         if args.command == "record-sequence":

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def installation(root):
-    for name in ("config.example.json", "config.sumeru.example.json"):
+    for name in ("config.example.json", "config.sumeru.example.json", "config.sumeru-full.example.json"):
         shutil.copy2(ROOT / name, root / name)
     shutil.copy2(ROOT / "release/regions.portable.json", root / "regions.json")
 
@@ -38,6 +38,23 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse((self.root / "config.json").exists())
         self.assertFalse((self.root / "datasets").exists())
 
+    def test_source_manifest_never_overwrites_examples(self):
+        shutil.copy2(ROOT / "regions.json", self.root / "regions.json")
+        service = LauncherService(self.root)
+        before = (self.root / "config.sumeru-full.example.json").read_bytes()
+        path = service.ensure_config("sumeru")
+        self.assertEqual(path.name, "config.sumeru-full.json")
+        self.assertEqual((self.root / "config.sumeru-full.example.json").read_bytes(), before)
+
+    def test_first_full_sumeru_read_keeps_legacy_settings(self):
+        old = json.loads((self.root / "config.sumeru.example.json").read_text())
+        old["performance"]["mode"] = "low_cpu"
+        (self.root / "config.sumeru.json").write_text(json.dumps(old))
+        with patch("genshin_navigator.roi_setup.check_config_roi", return_value=Mock(to_dict=lambda: {"valid": True})):
+            values = self.service.read("sumeru")
+        self.assertEqual(values["mode"], "low_cpu")
+        self.assertFalse((self.root / "config.sumeru-full.json").exists())
+
     def test_save_preserves_unknown_fields_and_invalid_save_is_atomic(self):
         path = self.service.ensure_config("fontaine")
         raw = json.loads(path.read_text()); raw["future_extension"] = {"keep": 3}
@@ -53,10 +70,10 @@ class LauncherTests(unittest.TestCase):
     def test_start_closes_window_before_spawn(self):
         bridge = LauncherBridge(self.service); bridge._window = Mock()
         with patch("genshin_navigator.asset_setup.region_asset_status", return_value={"ready": True}), patch("genshin_navigator.roi_setup.check_config_roi", return_value=Mock(valid=True)), patch("genshin_navigator.launcher.spawn_command") as spawn:
-            bridge.start("sumeru_desert", self.values())
+            bridge.start("sumeru", self.values())
             bridge._window.destroy.assert_called_once()
             spawn.assert_not_called()
-        self.assertEqual(bridge._launch_args[-1], str(self.root / "config.sumeru.json"))
+        self.assertEqual(bridge._launch_args[-1], str(self.root / "config.sumeru-full.json"))
 
     def test_spawn_uses_arguments_without_shell(self):
         with patch("genshin_navigator.launcher.subprocess.Popen") as popen:

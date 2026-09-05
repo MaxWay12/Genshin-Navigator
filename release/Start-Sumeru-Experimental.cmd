@@ -12,5 +12,5 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-GenshinNavigator.exe track --regions regions.json --region sumeru_desert
+GenshinNavigator.exe track --config config.sumeru.json
 if errorlevel 1 pause
