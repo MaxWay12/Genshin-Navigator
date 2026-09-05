@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.4-alpha — local candidate, not published
+## v0.1.4-alpha
 
 - Refresh compact/expanded HUD styling: large distance, north-up compass, readable status and mouse buttons/tooltips.
 - Safe mouse-hold collection, clickable hint pagination, tray lock/unlock and Russian tray labels; global shortcuts unchanged.
