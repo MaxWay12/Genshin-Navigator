@@ -13,6 +13,7 @@ from . import __version__
 from .config import load_config
 from .portable_transfer import PortableTransfer, atomic_json
 from .region_manifest import load_region_manifest
+from .launcher_exploration import ExplorationBridge
 
 
 def installation_root() -> Path:
@@ -123,7 +124,7 @@ class LauncherService:
         atomic_json(self.state_path, {"format_version": 1, "region": region})
 
 
-class LauncherBridge:
+class LauncherBridge(ExplorationBridge):
     def __init__(self, service: LauncherService):
         self._service = service
         self._window = None
@@ -409,10 +410,11 @@ class LauncherBridge:
         def save():
             from .collection_plans import CollectionPlan
             from uuid import uuid4
-            repo, config, _ = self._collections(region)
+            repo, config, data = self._collections(region)
             if not isinstance(payload,dict):
                 raise ValueError("Некорректный план")
             candidate = dict(payload,format_version=1,region_id=config.data.region_id)
+            previous = None
             if not candidate.get("plan_id"):
                 candidate["plan_id"] = uuid4().hex
             else:
@@ -420,7 +422,9 @@ class LauncherBridge:
                 if previous.region_id != config.data.region_id:
                     raise ValueError("План другого региона")
             plan = CollectionPlan.from_dict(candidate)
-            repo.save(plan)
+            known={p.id for p in data.catalog.pois} | (set(previous.poi_ids) if previous else set())
+            if any(i not in known for i in plan.poi_ids): raise ValueError("Нельзя добавить неизвестный объект")
+            repo.save(plan,allow_missing=previous is not None)
             return {"saved_plan": plan.to_dict()}
         return self._background(save)
 

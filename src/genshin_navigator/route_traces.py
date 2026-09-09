@@ -216,7 +216,10 @@ class RouteTraceJournal:
                     record = self.buffer.get(timeout=.1)
                 except queue.Empty:
                     continue
-                self.stream.write(json.dumps(record, allow_nan=False) + "\n")
+                line=json.dumps(record, allow_nan=False) + "\n"
+                if self.stream.tell()+len(line.encode("utf-8"))>32*1024*1024:
+                    raise ValueError("Route journal reached its size limit")
+                self.stream.write(line)
                 self.stream.flush(); os.fsync(self.stream.fileno())
         except (OSError, ValueError, TypeError) as error:
             self.error = type(error).__name__

@@ -207,7 +207,13 @@ class NavigationController:
         if position is None:
             return ()
         if section == "available":
-            points = [poi for poi, _ in self._ordered(position)]
+            if self.active_plan is not None:
+                by_id={p.id:p for p in self.catalog.on_layer(position)}
+                excluded=self.progress.collected_ids | self.skipped_ids | self.blacklisted_ids
+                if self.outing_progress: excluded |= self.outing_progress.collected_ids
+                points=[by_id[i] for i in self.active_plan.poi_ids if i in by_id and i not in excluded]
+            else:
+                points = [poi for poi, _ in self._ordered(position)]
         else:
             ids = self.skipped_ids if section == "skipped" else self.blacklisted_ids
             points = [poi for poi in self.catalog.on_layer(position) if poi.id in ids]
@@ -220,16 +226,36 @@ class NavigationController:
             result.append(TargetCandidate(poi, meters, bool(selected and selected.id == poi.id), self._selection_ready))
         return tuple(result)
 
+    def browse_candidates(self, layer_id, section="available"):
+        """Browsing never replaces the player's space, even while LOST."""
+        position=self._last_position_by_space.get(self._active_key)
+        region=position.region_id if position else (self.catalog.pois[0].region_id if self.catalog.pois else None)
+        collected=self.progress.collected_ids | (self.outing_progress.collected_ids if self.outing_progress else set())
+        result=[]
+        for poi in self.catalog.pois:
+            if poi.region_id!=region or poi.layer_id!=layer_id: continue
+            if section=="available" and poi.id in collected|self.skipped_ids|self.blacklisted_ids: continue
+            if section=="collected" and poi.id not in collected: continue
+            if section=="skipped" and poi.id not in self.skipped_ids: continue
+            if section=="hidden" and poi.id not in self.blacklisted_ids: continue
+            usable=bool(self._selection_ready and position and poi.same_space(position))
+            distance=self.catalog.world_distance(position,poi) if usable else None
+            meters=distance*self.calibration.meters_per_world_unit if distance is not None and self.calibration and self.calibration.supports_region(region) else None
+            result.append(TargetCandidate(poi,meters,bool(self.current_target and self.current_target.id==poi.id),usable and section=="available"))
+        return tuple(result)
+
     def select_target(self, identifier: str) -> bool:
         if not self._selection_ready or self._active_key is None:
             return False
-        if not any(row.poi.id == identifier for row in self.candidates()):
+        if not any(row.poi.id == identifier and row.selectable for row in self.browse_candidates(self._active_key[1])):
             return False
         if self.active_plan is not None:
             if identifier not in self.active_plan.poi_ids:
                 return False
             self._set_plan_step(self.active_plan.poi_ids.index(identifier))
         self._selected_by_space[self._active_key] = identifier
+        target=next(p for p in self.catalog.pois if p.id==identifier)
+        if self.target_kinds is not None: self.target_kinds.add(target.kind)
         self._save_preferences()
         return True
 

@@ -103,6 +103,9 @@ class DebugMapView:
         self._hint_service = hint_service
         self._hint_image_path: Path | None = None
         self._hint_image: np.ndarray | None = None
+        self._image_viewport = None
+        self._image_drag = None
+        self._detail_hits = []
         self._locked = True
         self._hud_hits = ()
         self._mouse_hover = None
@@ -114,6 +117,11 @@ class DebugMapView:
         self._target_section = "available"
         self._target_hits = []
         self._overlap_ids = ()
+        self._browsed_layer = None
+        self._map_query = ""
+        self._map_kind = None
+        self._search_edit = False
+        self._clusters = ()
         self._layers = {"surface": atlas}
         self._layers.update(layer_maps or {})
         self._layer_labels = {"surface": "Фонтейн · Поверхность"}
@@ -271,7 +279,7 @@ class DebugMapView:
             )
             cv2.resizeWindow(self.window_name, *size)
         elif self.base.size:
-            cv2.resizeWindow(self.window_name, self.base.shape[1] + 360, max(600, self.base.shape[0] + 142))
+            cv2.resizeWindow(self.window_name, self.base.shape[1] + 360, max(750, self.base.shape[0] + 142))
 
     def _select_layer(self, layer_id: str | None) -> None:
         selected = layer_id if layer_id in self._layers else "surface"
@@ -441,10 +449,19 @@ class DebugMapView:
         performance: PerformanceSnapshot | None = None,
     ) -> bool:
         layer_id = snapshot.position.layer_id if snapshot.position is not None else snapshot.map_layer_id
-        self._select_layer(layer_id)
+        self._select_layer(self._browsed_layer if self._mode=="map" and self._browsed_layer else layer_id)
         navigation = self._navigation.update(snapshot) if self._navigation else None
         self._last_navigation = navigation
         key = cv2.waitKey(1) & 0xFF
+        if self._mode=="map" and self._search_edit:
+            if key in (13,27): self._search_edit=False
+            elif key==8: self._map_query=self._map_query[:-1]
+            elif key==22:
+                from .map_browser import clipboard_text
+                self._map_query=clipboard_text()
+            elif 32<=key<127: self._map_query=(self._map_query+chr(key))[:120]
+            self._target_page=0
+            key=255
         local_actions = {
             ord("n"): HotkeyAction.NEXT, ord("N"): HotkeyAction.NEXT,
             ord("p"): HotkeyAction.PREVIOUS, ord("P"): HotkeyAction.PREVIOUS,
@@ -573,20 +590,15 @@ class DebugMapView:
             if hint.image_path != self._hint_image_path:
                 self._hint_image_path = hint.image_path
                 self._hint_image = read_image(str(hint.image_path), cv2.IMREAD_COLOR)
+                self._image_viewport = None
             image = self._hint_image
         if image is not None and image.size:
-            height, width = image.shape[:2]
-            scale = min(image_w / width, image_h / height)
-            interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
-            resized = cv2.resize(
-                image,
-                (max(1, round(width * scale)), max(1, round(height * scale))),
-                interpolation=interpolation,
-            )
-            draw_x = image_x + (image_w - resized.shape[1]) // 2
-            draw_y = image_y + (image_h - resized.shape[0]) // 2
-            y2, x2 = draw_y + resized.shape[0], draw_x + resized.shape[1]
-            panel[draw_y:y2, draw_x:x2] = resized
+            if self._image_viewport is None:
+                self._image_viewport = MapViewport.fit(image_w,image_h,image.shape[1],image.shape[0])
+            view = self._image_viewport
+            tx,ty = view.to_screen(0,0)
+            panel[image_y:image_y+image_h,image_x:image_x+image_w] = cv2.warpAffine(
+                image,np.float64([[view.scale,0,tx],[0,view.scale,ty]]),(image_w,image_h),borderValue=(22,24,15))
         else:
             cv2.rectangle(
                 panel, (image_x, image_y),
@@ -599,11 +611,20 @@ class DebugMapView:
             )
 
         text_x = 14
-        text_y = image_y + image_h + 34
+        self._image_rect = (image_x,image_y,image_x+image_w,image_y+image_h)
+        gallery_y = image_y+image_h+2
+        count = len(hint.hint.images) if hint.hint else 0
+        self._detail_hits = [(8, gallery_y, 48, gallery_y+22, "image_previous"),
+                             (48,gallery_y,92,gallery_y+22,"image_next"),
+                             (92,gallery_y,175,gallery_y+22,"image_reset"),
+                             (175,gallery_y,self.details_width-8,gallery_y+22,"official")]
+        for x,label in ((17,"‹"),(57,"›"),(98,"Сброс"),(180,"HoYoLAB")):
+            self._put_unicode_text(panel,label,(x,gallery_y),(170,220,180))
+        text_y = image_y + image_h + 60
         line_width = max(28, (self.details_width - 28) // 8)
         self._put_unicode_text(
-            panel, hint.message or hint.state.value,
-            (text_x, image_y + image_h + 7), (175, 180, 185),
+            panel, f"{hint.image_index+1 if count else 0}/{count} · " + (hint.message or hint.state.value),
+            (text_x, image_y + image_h + 29), (175, 180, 185),
         )
         lines = self._hint_lines(hint, line_width)
         per_page = max(1, (self.details_height - text_y - 35) // 22)
@@ -614,6 +635,10 @@ class DebugMapView:
             self._put_unicode_text(
                 panel, line, (text_x, text_y + index * 22), (220, 222, 224)
             )
+            if hint.hint:
+                link=next((url for url in hint.hint.links if urllib_domain(url)==line),None)
+                if line.startswith("Видео:"): link=hint.hint.video_url
+                if link: self._detail_hits.append((text_x,text_y+index*22,self.details_width-10,text_y+(index+1)*22,"link:"+link))
         footer = f"‹ Назад       {self._details_page + 1} / {pages}       Вперёд ›"
         cv2.rectangle(panel, (8, self.details_height - 30), (self.details_width - 8, self.details_height - 5), (32, 40, 26), -1)
         self._put_unicode_text(panel, footer, (16, self.details_height - 27), (175, 200, 183))
@@ -635,7 +660,8 @@ class DebugMapView:
         paused_reason: str | None,
         performance: PerformanceSnapshot | None = None,
     ) -> np.ndarray:
-        if self._viewport.following and navigation and navigation.available and navigation.position:
+        same_layer=bool(navigation and navigation.position and navigation.position.layer_id==self._active_layer_id)
+        if self._viewport.following and same_layer and navigation.available:
             self._viewport = self._viewport.centered(navigation.position.x, navigation.position.y, follow=True)
         if self._viewport_cache_key != self._viewport:
             view = self._viewport
@@ -645,27 +671,41 @@ class DebugMapView:
                 (view.width, view.height), flags=cv2.INTER_LINEAR, borderValue=(18,18,18))
             self._viewport_cache_key = view
         canvas = cv2.copyMakeBorder(self._viewport_background, 0, 142, 0, 0, cv2.BORDER_CONSTANT, value=(18, 18, 18))
+        map_canvas=canvas[:self.base.shape[0],:self.base.shape[1]]
         colors = {TrackerState.TRACKING: (80, 220, 80), TrackerState.ACQUIRING: (40, 210, 240), TrackerState.RELOCATING: (30, 150, 255), TrackerState.LOST: (60, 60, 230)}
-        color = (150, 150, 150) if paused_reason else colors[snapshot.state]
+        color = (150, 150, 150) if paused_reason or snapshot.stale else colors[snapshot.state]
         layer_poi_count = 0
-        if self._poi_catalog is not None and snapshot.position is not None:
-            layer_pois = [poi for poi in self._poi_catalog.on_layer(snapshot.position) if self._poi_kinds is None or poi.kind in self._poi_kinds if self._poi_progress is None or poi.id not in self._poi_progress.collected_ids]
+        if self._poi_catalog is not None:
+            layer_pois = [row.poi for row in self._map_rows()]
             layer_poi_count = len(layer_pois)
-            for poi in layer_pois:
-                point = tuple(round(v) for v in self._viewport.to_screen(poi.x, poi.y))
-                if 0 <= point[0] < self.base.shape[1] and 0 <= point[1] < self.base.shape[0]:
-                    cv2.circle(canvas, point, 2, self._poi_color(poi), -1)
+            from .map_browser import cluster_markers
+            self._clusters=cluster_markers(layer_pois,self._viewport,26 if self._viewport.scale<1 else 8)
+            for cluster in self._clusters:
+                point=(round(cluster.x),round(cluster.y))
+                cv2.circle(map_canvas,point,8 if len(cluster.ids)>1 else 3,(75,210,155),-1)
+                if len(cluster.ids)>1: cv2.putText(map_canvas,str(len(cluster.ids)),(point[0]+7,point[1]),cv2.FONT_HERSHEY_SIMPLEX,.35,(230,240,230),1)
+            plan=self._navigation.active_plan if self._navigation else None
+            if plan and plan.layer_id==self._active_layer_id:
+                by_id={p.id:p for p in self._poi_catalog.pois}
+                for a,b in zip(plan.poi_ids,plan.poi_ids[1:]):
+                    if a not in by_id or b not in by_id: continue
+                    p1=np.array(self._viewport.to_screen(by_id[a].x,by_id[a].y)); p2=np.array(self._viewport.to_screen(by_id[b].x,by_id[b].y))
+                    visible,c1,c2=cv2.clipLine((0,0,self.base.shape[1],self.base.shape[0]),tuple(map(round,p1)),tuple(map(round,p2)))
+                    if visible:
+                        count=max(1,int(np.linalg.norm(np.array(c2)-c1)/8))
+                        for point in np.linspace(c1,c2,count): cv2.circle(map_canvas,tuple(map(round,point)),1,(100,195,245),-1)
+                self._put_unicode_text(canvas,"Порядок сбора · не пеший маршрут",(10,30),(100,195,245))
         target_point = None
-        if navigation is not None and navigation.target is not None:
+        if navigation is not None and navigation.target is not None and navigation.target.layer_id==self._active_layer_id:
             poi = navigation.target
             target_point = tuple(round(v) for v in self._viewport.to_screen(poi.x, poi.y))
-            cv2.circle(canvas, target_point, 9, (255, 255, 255) if navigation.available else (150, 150, 150), 2)
-        if snapshot.x_px is not None and snapshot.y_px is not None:
+            cv2.circle(map_canvas, target_point, 9, (255, 255, 255) if navigation.available else (150, 150, 150), 2)
+        if same_layer and snapshot.x_px is not None and snapshot.y_px is not None:
             point = tuple(round(v) for v in self._viewport.to_screen(snapshot.x_px, snapshot.y_px))
-            cv2.circle(canvas, point, 9, (10, 10, 10), 3)
-            cv2.circle(canvas, point, 7, color, -1)
+            cv2.circle(map_canvas, point, 9, (10, 10, 10), 3)
+            cv2.circle(map_canvas, point, 7, color, -1)
             if target_point is not None:
-                cv2.line(canvas, point, target_point, (255, 235, 180) if navigation and navigation.available else (150, 150, 150), 2, cv2.LINE_AA)
+                cv2.line(map_canvas, point, target_point, (255, 235, 180) if navigation and navigation.available else (150, 150, 150), 2, cv2.LINE_AA)
         y = self.base.shape[0]
         trace_status = self._trace_status() if getattr(self,"_trace_status",None) else ""
         if trace_status:
@@ -673,9 +713,10 @@ class DebugMapView:
         self._put_unicode_text(canvas, "Сброс       К игроку       К цели       Следить: " + ("да" if self._viewport.following else "нет") + "      Запись", (10,y+116), (180,220,185))
         state = "PAUSED" if paused_reason else snapshot.state.value
         perf = "" if performance is None else f"  CV={performance.processing_ms or 0:.0f}ms/{performance.search_mode}/{performance.mode}"
-        cv2.putText(canvas, f"{state}  confidence={snapshot.confidence:.2f}  fps={fps:.1f}{perf}", (12, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
+        cv2.putText(canvas, f"{state}  confidence={snapshot.confidence:.2f}  HUD={fps:.1f}Hz{perf}", (12, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
         label = self._layer_labels.get(snapshot.map_layer_id or "surface", snapshot.map_layer_id or "surface")
-        self._put_unicode_text(canvas, f"Слой: {label}", (12, y + 31), (210, 210, 210))
+        age=f"{max(0,time.perf_counter()-snapshot.position.timestamp):.1f} с" if snapshot.position else "нет позиции"
+        self._put_unicode_text(canvas, f"Слой: {label[:40]} · возраст: {age}", (12, y + 31), (210, 210, 210))
         target_text, controls = self._navigation_text(navigation, layer_poi_count)
         self._put_unicode_text(canvas, target_text, (12, y + 55), (210, 210, 210))
         cv2.putText(canvas, controls, (12, y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (190, 190, 190), 1, cv2.LINE_AA)
@@ -684,15 +725,46 @@ class DebugMapView:
         if time.monotonic() < self._toast_until:
             self._put_unicode_text(canvas, self._toast, (12, y + 73), (245, 220, 170))
         if self._navigation is not None:
-            rows = self._navigation.candidates(self._target_section)
+            rows = self._map_rows()
             if self._overlap_ids and self._target_section == "available":
                 rows = tuple(row for row in rows if row.poi.id in self._overlap_ids)
             panel, self._target_hits, self._target_page = render_panel(
                 rows, self._target_section, self._target_page, canvas.shape[0],
-                self._unicode_font, locked=self._locked, overlap=bool(self._overlap_ids))
+                self._unicode_font, locked=self._locked, overlap=bool(self._overlap_ids),
+                browser={"query":self._map_query+(" |" if self._search_edit else ""),"layer":self._layer_labels.get(self._active_layer_id,self._active_layer_id),"kind":self._map_kind or "все"})
             canvas = cv2.copyMakeBorder(canvas, 0, panel.shape[0] - canvas.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=(18, 18, 18))
             canvas = np.concatenate((canvas, panel), axis=1)
         return canvas
+
+    def _map_rows(self):
+        if self._navigation is None: return ()
+        from .map_browser import filter_rows
+        rows=self._navigation.browse_candidates(self._active_layer_id,self._target_section)
+        # Reuse the fixed navigation order when viewing the player's candidates.
+        if not self._browsed_layer and self._target_section=="available" and self._map_kind is None and not self._map_query:
+            candidates=self._navigation.candidates()
+            if candidates: rows=candidates
+        return filter_rows(rows,self._map_query,self._map_kind)
+
+    def _plan_from_map(self, ids, append=False):
+        nav=self._navigation
+        if nav is None or nav.plan_repository is None:
+            self._show_toast("Планы требуют SQLite"); return
+        from .collection_plans import CollectionPlan
+        from uuid import uuid4
+        try:
+            points=[p for p in nav.catalog.pois if p.id in ids]
+            if not points: return
+            first=points[0]
+            old=nav.active_plan if append else None
+            ordered=list(old.poi_ids) if old else []
+            for identifier in ids:
+                if identifier not in ordered: ordered.append(identifier)
+            plan=replace(old,poi_ids=tuple(ordered)) if old else CollectionPlan(uuid4().hex,"Сбор · "+self._active_layer_id,first.region_id,first.layer_id,first.coordinate_space,tuple(ordered))
+            nav.plan_repository.save(plan)
+            nav.activate_plan(plan.plan_id)
+            self._show_toast("План сохранён · редактирование в launcher → Сбор")
+        except (ValueError,KeyError,OSError): self._show_toast("План должен содержать точки одного слоя")
 
     def _on_mouse(self, event, x, y, flags, param=None):
         if self._mode == "hud":
@@ -700,6 +772,41 @@ class DebugMapView:
             if self._locked:
                 self._mouse_collect = False
                 return
+            if hasattr(self,"_image_rect") and self._details_open:
+                left,top,right,bottom = self._image_rect
+                inside_image = left <= x < right and top <= y < bottom
+                if event == cv2.EVENT_MOUSEWHEEL:
+                    delta = (flags >> 16) & 0xffff
+                    if delta >= 32768: delta -= 65536
+                    if inside_image and self._image_viewport:
+                        self._image_viewport = self._image_viewport.zoom(1.2 if delta>0 else 1/1.2,x-left,y-top)
+                    else:
+                        self._details_page = max(0,self._details_page + (-1 if delta>0 else 1))
+                    return
+                if event == cv2.EVENT_LBUTTONDOWN and inside_image:
+                    self._image_drag = (x,y)
+                    return
+                if event == cv2.EVENT_MOUSEMOVE and self._image_drag and self._image_viewport:
+                    self._image_viewport = self._image_viewport.pan(x-self._image_drag[0],y-self._image_drag[1])
+                    self._image_drag = (x,y)
+                    return
+                if event == cv2.EVENT_LBUTTONUP:
+                    self._image_drag = None
+                    for l,t,r,b,action in self._detail_hits:
+                        if l<=x<r and t<=y<b:
+                            hint = self._hint_service.snapshot if self._hint_service else None
+                            if action == "image_reset": self._image_viewport = None
+                            elif action.startswith("link:https://"):
+                                import webbrowser
+                                webbrowser.open(action[5:])
+                            elif hint and action.startswith("image_"):
+                                self._hint_service.select_image(hint.image_index+(-1 if action=="image_previous" else 1))
+                            elif hint and hint.poi_id and action == "official":
+                                from .poi_guidance import official_point_id
+                                import webbrowser
+                                identifier = official_point_id(hint.poi_id)
+                                if identifier: webbrowser.open(f"https://act.hoyolab.com/ys/app/interactive-map/index.html?lang=ru-ru#/map/2?point_id={identifier}")
+                            return
             hit = next((hit for hit in self._hud_hits if hit.enabled and hit.contains(x, y)), None)
             if event == cv2.EVENT_MOUSEMOVE and self._mouse_collect:
                 if hit is None or hit.action is not HotkeyAction.COLLECTED_HOLD:
@@ -747,8 +854,12 @@ class DebugMapView:
                 image = self._layers[self._active_layer_id]
                 self._viewport = MapViewport.fit(self.base.shape[1],self.base.shape[0],image.shape[1],image.shape[0])
             elif x < 190 and nav and nav.available and nav.position:
+                self._browsed_layer=None
+                self._select_layer(nav.position.layer_id)
                 self._viewport = self._viewport.centered(nav.position.x,nav.position.y)
             elif x < 280 and nav and nav.target:
+                self._browsed_layer=nav.target.layer_id
+                self._select_layer(nav.target.layer_id)
                 self._viewport = self._viewport.centered(nav.target.x,nav.target.y)
             elif x >= 430:
                 self._dispatch_action(HotkeyAction.TOGGLE_TRACE,nav)
@@ -756,11 +867,15 @@ class DebugMapView:
                 self._viewport = replace(self._viewport,following=not self._viewport.following)
             return
         if x < self.base.shape[1] and y < self.base.shape[0]:
-            matches = tuple(row.poi.id for row in self._navigation.candidates()
-                            if sum((a-b)**2 for a,b in zip(self._viewport.to_screen(row.poi.x,row.poi.y),(x,y))) <= 64)
+            cluster=next((c for c in self._clusters if (c.x-x)**2+(c.y-y)**2<=144),None)
+            matches=cluster.ids if cluster else ()
+            if matches and flags & cv2.EVENT_FLAG_SHIFTKEY:
+                self._plan_from_map(matches,append=True)
+                return
             if len(matches) == 1:
                 self._navigation.select_target(matches[0])
             elif matches:
+                self._viewport=self._viewport.zoom(1.7,x,y)
                 self._overlap_ids = matches
                 self._target_section, self._target_page = "available", 0
             return
@@ -775,10 +890,29 @@ class DebugMapView:
                 self._navigation.refresh_candidates()
                 self._overlap_ids, self._target_page = (), 0
             elif hit.action == "select":
-                self._navigation.select_target(hit.value)
+                if flags & cv2.EVENT_FLAG_SHIFTKEY: self._plan_from_map((hit.value,),append=True)
+                else: self._navigation.select_target(hit.value)
             elif hit.action == "restore":
                 if self._navigation.restore_target(hit.value, self._target_section):
                     self._show_toast("Точка восстановлена")
+            elif hit.action == "search":
+                self._search_edit=True
+                self._show_toast("Поиск: текст/ID, Ctrl+V — вставить, Enter — готово")
+            elif hit.action == "layer":
+                layers=list(self._layers)
+                self._browsed_layer=layers[(layers.index(self._active_layer_id)+1)%len(layers)]
+                self._select_layer(self._browsed_layer)
+                self._target_page=0; self._overlap_ids=()
+                self._show_toast("Просмотр другого слоя · положение игрока не изменено")
+            elif hit.action == "kind":
+                kinds=[None]+sorted({p.kind for p in self._poi_catalog.pois})
+                self._map_kind=kinds[(kinds.index(self._map_kind)+1)%len(kinds)]
+                self._target_page=0; self._overlap_ids=()
+            elif hit.action == "plan":
+                self._plan_from_map(tuple(row.poi.id for row in self._map_rows()))
+            elif hit.action == "free":
+                if self._navigation.plan_repository: self._navigation.activate_plan(None)
+                self._browsed_layer=None; self._map_kind=None; self._map_query=""; self._overlap_ids=()
             break
 
     @staticmethod
