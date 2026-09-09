@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-alpha — local acceptance candidate
+
+- Experimental Mondstadt/Dragonspine and verified permanent/outing/landmark categories.
+- SQLite v4, persistent collection plans, outing reset, plan import/export and order preview.
+- Map zoom/pan, search, layer browsing, clusters and map-based plan creation.
+- Lazy hint gallery with shared LRU, image zoom/pan and explicit links.
+- Isolated HoYoLAB launcher actions with separate sync preview/confirmation.
+- Coordinate-only route journals, non-destructive review, file exchange and directed graph workbench.
+- Live graph guidance remains disabled pending the manual pilot. No publication yet.
+
 ## v0.1.4-alpha
 
 - Refresh compact/expanded HUD styling: large distance, north-up compass, readable status and mouse buttons/tooltips.

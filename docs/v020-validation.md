@@ -1,78 +1,85 @@
-# v0.2.0-alpha — implementation checkpoint
+# v0.2.0-alpha — проверка локального кандидата
 
-Date: 2026-09-09. Development branch: `codex/exploration-0.2.0`.
-This is an incomplete development checkpoint, not a release candidate or a
-statement that the full v0.2.0 plan has passed acceptance. Application version
-remains 0.1.4a1 until candidate preparation. Nothing has been published.
+Дата: 2026-09-10. Ветка: `codex/exploration-0.2.0`. Версия приложения: `0.2.0a1`.
+Публикация не выполнена. Формальная игровая приёмка не заменяется unit-тестами.
 
-## Verified baseline
+## Выполненные проверки
 
-- Before changes: 244 unit tests passed. Current checkpoint: 264 passed.
-- Launcher JavaScript syntax check passed; native WebView2 interaction has not
-  been manually accepted for the new screens.
-- Existing Fontaine suite: PASS; surface teleport coverage 98.51%, acquisition
-  1.5002 s, no reported false locks. The old manifest lacks coordinate checkpoints;
-  this is regression evidence, not complete positional validation.
-- Existing Sumeru recovery suite: 4/4 mandatory PASS; four known informational
-  failures remain. This suite is recovery-only without positional ground truth.
-- CV thresholds were not changed. No CPU claim is made for the unavailable tester.
+- Исходный baseline: 244 теста. Текущий набор: 274 теста, все проходят.
+- JavaScript launcher: синтаксис проверен.
+- Синтетические экраны карты и галереи отрендерены без создания native-окон и
+  визуально проверены. Это не тест глобальных клавиш внутри игры.
+- Fontaine golden suite: PASS. Surface teleport coverage 98.51%, reacquire P95
+  1.5002 с, неправильные слои и зарегистрированные false locks — 0.
+- Underground stationary в том же suite: coverage 98.94%.
+- Старый Fontaine manifest не содержит координатных checkpoints: позиционная
+  точность проверена не полностью, jitter на некоторых фазах не определён.
+- Sumeru recovery suite: 4/4 обязательных PASS; четыре прежних informational
+  провала остались без изменения классификации. Это recovery-only, без
+  positional ground truth.
+- CV-пороги не менялись. CPU на недоступном компьютере тестера не проверялся.
+- Скрытый изолированный WebView2: реальный HTML portable-сборки загрузился,
+  три региона и восемь вкладок доступны, canvas графа отрисован без JS-ошибок.
+  Вход в аккаунт и игровые действия этот smoke-тест не выполняет.
+- Реальный сохранённый снимок пользовательских данных перенесён в папку с
+  кириллицей/пробелами: 2209 файлов, 1165 POI в двух регионах, 9 progress,
+  33 hints, 33 hint assets, 3968 unknown remote; все прежние строки сохранены
+  при миграции в schema v4. Исходные хеши не изменились, auth не перенесён.
+- Неизменённый механизм UpdateService из 0.1.4 проверен с реальным новым ZIP
+  и локальным транспортом вместо публикации: SHA/распаковка/перенос/EXE прошли.
+  EXE из новой кириллической папки сообщает 0.2.0a1, data-status — schema 4,
+  750 Fontaine POI и 9 collected. Источник данных — сохранённый снимок 0.1.2,
+  не заявляем это за ручной GUI-переезд живой пользовательской 0.1.4.
+- Portable privacy audit: PASS. Карты, реальный прогресс и auth в ZIP не входят.
 
-## Implemented at this checkpoint
+## Данные
 
-- Transactional SQLite schema v4 with pre-migration backup through the existing
-  provider. Categories distinguish permanent progress, outings and landmarks.
-- Outing collection/reset is separate from permanent progress and remote sync.
-  Public progress sync includes only known permanent categories.
-- Persistent single-space collection plans, current step, activation, session
-  skip/undo and selection by the existing Navigation Controller. Launcher has
-  a basic plan editor, category settings and catalog statistics.
-- Cursor-centred map zoom, pan, reset, player/target centring and explicit follow.
-- HoYoLAB launcher controls use an isolated child process: preview waits for a
-  separate confirmation. EOF/cancel does not apply sync. No account sync was
-  performed as part of development verification.
-- Opt-in route recording from map/tray, at most 2 points/second, timestamp
-  deduplication, discontinuities and bounded non-blocking journal queue. JSONL
-  recovery and coordinate-only JSON export are implemented. No screenshots or
-  credentials are part of this format.
-- Pure directed graph/A* prototype requires explicitly reviewed segments and
-  connections. Geometric crossings and reverse edges are not connected
-  automatically. It is NOT wired to live guidance and has no accepted pilot.
-- Portable transfer includes routes/plans directories and Mondstadt config.
+Публичные metadata/label/tree проверены без cookies. ID: статуя 2, телепорт 3,
+анемокул 5, дендрокул 403, гидрокул 508, агат 141, испытание 64. Диковинки используют
+явный перечень проверенных label ID; фильтр отображения не ограничивает sync-data.
 
-## Official data evidence
+Подготовка Мондштадта: 176 тайлов, группа 196, три изображения этажей.
+Повторный sync-data: 1163 POI (1161 surface, 2 underground), четыре пространства,
+семь зарегистрированных assets, отсутствующих assets — 0. Неизвестных этажей и
+точек вне эталона — 0. Контент: `sha256:cc957bf6e246d71d9744`.
+Эти числа подтверждают набор данных, не проверенное игровое покрытие.
 
-Public HoYoLAB label/tree and regional metadata were queried without credentials.
-Verified IDs include statue 2, waypoint 3, anemoculus 5, dendroculus 403,
-hydroculus 508, crimson agate 141 and time trial 64. Specialty labels are listed
-explicitly in `hoyolab_poi.py`; display filters do not control catalog ingestion.
+## Реализованные пользовательские потоки
 
-Mondstadt setup completed in ignored local data: 176 surface tiles, official
-underground group 196 with 3 floor images, and 1163 selected POIs. All 66
-anemoculi and 80 crimson agates in the inspected response belong to area 1.
-The statue/waypoint split was corrected after that download; regenerate/sync
-the development catalog before testing category display.
+- Постоянные категории, вылазки диковинок, ориентиры без permanent-collected.
+- Планы: создание, строки порядка/удаление, активный шаг, skip/undo текущей сессии,
+  восстановление, импорт/export и preview порядка по прямой.
+- Карта: zoom/pan, явное follow, поиск/вставка, состояния, категории, просмотр
+  другого слоя, кластеры и plan-from-map. Положение игрока при просмотре не меняется.
+- Галерея только по явным полям публичного ответа; lazy download, старый кэш,
+  общий LRU, zoom/pan, страницы и явное открытие ссылок.
+- HoYoLAB в launcher: отдельный auth-процесс, read-only preview и отдельное
+  подтверждение. Ни одного account-sync в ходе разработки не выполнялось.
+- Прогулки: bounded journal, до 2 точек/с, разрывы, восстановление завершённых
+  записей, разметка в sidecar, экспорт без личных данных, импорт unreviewed.
+- Граф: только проверенные направленные сегменты, явные соединения, A* preview,
+  исходная геометрия для длины, сохранение версии и проверка источников при открытии.
 
-Downloaded images and official group membership do not demonstrate successful
-localization or traversal. Mondstadt/Dragonspine remain experimental. No new
-gameplay coverage is claimed.
+## Решение по маршрутизации
 
-## Still required before a candidate
+Живое ведение по графу отключено. Нет принятого пилота из трёх прогулок и пяти
+маршрутов. В кандидат входят запись/просмотр/обмен и лабораторный редактор графа,
+но не автоматическое ведение, привязка произвольной позиции к ребру или off-path
+перестроение. Это разрешённый fallback выпуска; граф не изменяет confidence или
+координаты локализатора. Автоматического объединения пересечений нет.
 
-- Map search, clustering, independent layer browsing, complete state sections,
-  and plan creation/visualization from the map.
-- Full plan editing/import/export UX and explicit ordering preview.
-- Hint gallery with lazy loading, compatible cache/LRU and image viewer.
-- Trace naming, trimming/exclusion, viewer, reviewed import UI and metadata
-  registration. Current recorder stores raw journals and exports only.
-- Versioned graph decisions/repository, connection editor, endpoint preview,
-  off-path/frozen guidance and manual pilot. Keep guidance disabled until accepted.
-- Native GUI acceptance, migration/transfer acceptance for all new data, privacy
-  and failure-path tests beyond the current unit coverage.
-- Five Mondstadt scenarios, outstanding eight Sumeru scenarios, Fontaine
-  checkpoint strengthening and same-recording performance comparison.
-- Documentation for users, version bump, portable ZIP/SHA, clean-install and
-  updater acceptance. Publication requires a separate action.
+## Что требует пользователя перед публикацией
 
-The tables for hint galleries and route documents are scaffolding, not proof
-that their user-facing workflows are implemented. Route traces are not ground
-truth for the localization benchmark.
+| Проверка | Статус |
+|---|---|
+| Мондштадт: открытая местность, город, телепорт, Хребет, пригодная пещера | Новые размеченные записи не предоставлены |
+| Восемь полных сценариев Сумеру | Формальная приёмка остаётся незавершённой |
+| Fontaine checkpoints | Требуется усиление старого набора |
+| Три пешие прогулки и пять маршрутов у моста | Пилот не выполнен; ведение выключено |
+| Новые GUI-потоки с активным Genshin | Требуется ручной проход |
+| balanced/low_cpu на одном ПК, живой HUD и память | Требуется отдельный сравнимый замер |
+| HoYoLAB pull/push реально собранных новых категорий | Только ручной тест владельца аккаунта |
+
+Неизвестные участки не объявляются проверенными и не переводятся в informational
+ради выпуска. Route trace не является ground truth для своего же локализатора.
+Подробное управление: [exploration-guide](exploration-guide.md).

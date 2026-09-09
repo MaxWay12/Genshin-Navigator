@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "v0.1.4-alpha",
+    [string]$Version = "v0.2.0-alpha",
     [string]$EnvironmentPath = ""
 )
 
@@ -82,6 +82,8 @@ Copy-ReleaseFile "THIRD_PARTY_NOTICES.md"
 Copy-ReleaseFile "docs/v012-validation.md"
 Copy-ReleaseFile "docs/v013-validation.md"
 Copy-ReleaseFile "docs/v014-validation.md"
+Copy-ReleaseFile "docs/v020-validation.md"
+Copy-ReleaseFile "docs/exploration-guide.md"
 Copy-ReleaseFile "release/Start-Fontaine.cmd" "Start-Fontaine.cmd"
 Copy-ReleaseFile "release/Start-Sumeru-Experimental.cmd" "Start-Sumeru-Experimental.cmd"
 Copy-ReleaseFile "release/Configure-Minimap.cmd" "Configure-Minimap.cmd"
