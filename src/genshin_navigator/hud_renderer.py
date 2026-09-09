@@ -113,6 +113,8 @@ def render_compact(presentation, width, height, *, paused=False, locked=True, ho
             help_text = button.help if button.enabled else "Нужна подтверждённая позиция"
     if performance is not None and height >= 190 and hover is None and not locked:
         help_text = f"CV {performance.processing_ms or 0:.0f} мс · {performance.cv_fps:.1f} FPS · {performance.mode}"
+    if presentation.status_message and not fresh:
+        help_text = presentation.status_message
     if toast:
         help_text = toast
     draw.text(xy(12, 135), fit(draw, help_text, face, width - 24), font=face, fill=(203, 203, 155) if toast else (124, 149, 133))

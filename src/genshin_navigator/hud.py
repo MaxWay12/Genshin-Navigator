@@ -19,6 +19,7 @@ class HudPresentation:
     bearing_degrees: float | None
     available: bool
     collect_label: str = "Собрать"
+    status_message: str | None = None
 
 
 def build_hud_presentation(
@@ -49,7 +50,13 @@ def build_hud_presentation(
     from .categories import progress_kind, ProgressKind
     semantics = progress_kind(navigation.target.kind) if navigation and navigation.target else None
     label = "Посетил" if semantics is ProgressKind.LANDMARK else "Собрать"
-    return HudPresentation(target, distance, layer, state, bearing, available, label)
+    reason=None
+    if not available:
+        if tracker.reason in ("minimap_ui_not_detected","minimap_hidden"): reason="Миникарта скрыта"
+        elif tracker.stale: reason="Устарел результат"
+        elif tracker.state.value=="ACQUIRING": reason="Идёт захват"
+        else: reason="Нет подтверждения"
+    return HudPresentation(target, distance, layer, state, bearing, available, label, reason)
 
 
 @dataclass(frozen=True)

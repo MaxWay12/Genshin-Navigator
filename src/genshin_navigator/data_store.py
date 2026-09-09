@@ -272,6 +272,10 @@ class SqliteDataProvider:
                 "SELECT COALESCE(SUM(a.size_bytes), 0) FROM poi_hint_assets a JOIN pois p ON p.poi_id=a.poi_id WHERE p.region_id = ?",
                 (region_id,),
             ).fetchone()[0])
+            gallery = connection.execute(
+                "SELECT COUNT(*),COALESCE(SUM(g.size_bytes),0) FROM poi_hint_gallery g JOIN pois p ON p.poi_id=g.poi_id WHERE p.region_id=? AND g.relative_path IS NOT NULL", (region_id,)).fetchone()
+            hint_image_count += int(gallery[0])
+            hint_cache_bytes += int(gallery[1])
             stale_before = (
                 datetime.now(timezone.utc) - timedelta(days=hint_refresh_after_days)
             ).isoformat()

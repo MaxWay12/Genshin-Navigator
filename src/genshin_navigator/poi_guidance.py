@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from html.parser import HTMLParser
@@ -81,10 +81,15 @@ class PoiHint:
     video_url: str | None = None
     source_updated_at: str | None = None
     source: str = "HoYoLAB Interactive Map"
+    image_urls: tuple[str, ...] = ()
+
+    @property
+    def images(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(((self.image_url,) if self.image_url else ()) + self.image_urls))
 
     @property
     def empty(self) -> bool:
-        return not (self.content or self.image_url or self.links or self.video_url)
+        return not (self.content or self.images or self.links or self.video_url)
 
 
 @dataclass(frozen=True)
@@ -111,6 +116,8 @@ class PoiHintSnapshot:
     hint: PoiHint | None = None
     image_path: Path | None = None
     message: str = ""
+    image_index: int = 0
+    fetched_at: datetime | None = None
 
 
 class PoiHintProvider(Protocol):
@@ -151,13 +158,24 @@ def parse_point_info(payload: object, expected_poi_id: str) -> PoiHint:
         video_url = video.get("url") or video.get("video_url")
     if video_url and urllib.parse.urlparse(str(video_url)).scheme != "https":
         video_url = None
-    image_url = str(info.get("img")) if info.get("img") else None
+    image_url = info.get("img") if isinstance(info.get("img"), str) else None
     if image_url and urllib.parse.urlparse(image_url).scheme != "https":
         image_url = None
+    images = [image_url] if image_url else []
+    # Only explicit image fields in the public response; no discussions scraping.
+    for field in ("img_list", "image_list", "images", "img"):
+        items = info.get(field)
+        if isinstance(items, list):
+            for item in items[:32]:
+                url = item if isinstance(item, str) else item.get("url") if isinstance(item, dict) else None
+                if isinstance(url, str) and urllib.parse.urlparse(url).scheme == "https":
+                    images.append(url)
+    images = list(dict.fromkeys(images))[:32]
     return PoiHint(
         poi_id=expected_poi_id,
         content=plain_text(info.get("content")),
-        image_url=image_url,
+        image_url=images[0] if images else None,
+        image_urls=tuple(images),
         links=tuple(dict.fromkeys(links)),
         video_url=str(video_url) if video_url else None,
         source_updated_at=(
@@ -253,6 +271,7 @@ class SqlitePoiHintRepository:
             if row is None:
                 return None
             asset = connection.execute("SELECT * FROM poi_hint_assets WHERE poi_id = ?", (poi_id,)).fetchone()
+            gallery = connection.execute("SELECT image_url FROM poi_hint_gallery WHERE poi_id=? ORDER BY ordinal", (poi_id,)).fetchall()
             now = datetime.now(timezone.utc).isoformat()
             if asset is not None:
                 connection.execute("UPDATE poi_hint_assets SET last_accessed_at = ? WHERE poi_id = ?", (now, poi_id))
@@ -271,6 +290,7 @@ class SqlitePoiHintRepository:
                 video_url=str(row["video_url"]) if row["video_url"] else None,
                 source_updated_at=str(row["source_updated_at"]) if row["source_updated_at"] else None,
                 source=str(row["source"]),
+                image_urls=tuple(str(item[0]) for item in gallery),
             ),
             self._datetime(str(row["fetched_at"])),
             image_path,
@@ -280,6 +300,7 @@ class SqlitePoiHintRepository:
         now = datetime.now(timezone.utc).isoformat()
         asset_values = None
         image_path = None
+        obsolete_gallery = []
         if image is not None:
             body, mime, suffix = image
             digest = hashlib.sha256(body).hexdigest()
@@ -300,9 +321,24 @@ class SqlitePoiHintRepository:
             relative = os.path.relpath(image_path.resolve(), self.database.parent.resolve())
             asset_values = (hint.poi_id, relative, mime, len(body), digest, now, now)
         with self._lock, closing(self._connect()) as connection, connection:
+            previous_hint = connection.execute("SELECT image_url FROM poi_hints WHERE poi_id=?", (hint.poi_id,)).fetchone()
+            changed_image = bool(previous_hint and previous_hint[0] != hint.image_url)
             obsolete_asset = connection.execute(
                 "SELECT relative_path FROM poi_hint_assets WHERE poi_id = ?", (hint.poi_id,)
             ).fetchone()
+            for index, url in enumerate(hint.images):
+                connection.execute(
+                    "INSERT INTO poi_hint_gallery(poi_id,ordinal,image_url) VALUES (?,?,?) "
+                    "ON CONFLICT(poi_id,ordinal) DO UPDATE SET image_url=excluded.image_url "
+                    "WHERE poi_hint_gallery.image_url=excluded.image_url", (hint.poi_id,index,url))
+                old = connection.execute("SELECT image_url,relative_path FROM poi_hint_gallery WHERE poi_id=? AND ordinal=?", (hint.poi_id,index)).fetchone()
+                if old[0] != url:
+                    if old[1]: obsolete_gallery.append(old[1])
+                    connection.execute("DELETE FROM poi_hint_gallery WHERE poi_id=? AND ordinal=?", (hint.poi_id,index))
+                    connection.execute("INSERT INTO poi_hint_gallery(poi_id,ordinal,image_url) VALUES (?,?,?)", (hint.poi_id,index,url))
+            for old in connection.execute("SELECT relative_path FROM poi_hint_gallery WHERE poi_id=? AND ordinal>=?", (hint.poi_id,len(hint.images))).fetchall():
+                if old[0]: obsolete_gallery.append(old[0])
+            connection.execute("DELETE FROM poi_hint_gallery WHERE poi_id=? AND ordinal>=?", (hint.poi_id,len(hint.images)))
             connection.execute(
                 """
                 INSERT INTO poi_hints VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -325,22 +361,59 @@ class SqlitePoiHintRepository:
                         last_accessed_at=excluded.last_accessed_at
                     """, asset_values,
                 )
-            elif hint.image_url is None:
+            elif hint.image_url is None or changed_image:
                 connection.execute("DELETE FROM poi_hint_assets WHERE poi_id = ?", (hint.poi_id,))
-        if obsolete_asset is not None:
+        for stored in obsolete_gallery: self._remove_asset(stored)
+        if obsolete_asset is not None and (image is not None or hint.image_url is None or changed_image):
             stored = Path(str(obsolete_asset["relative_path"]))
             old_path = stored if stored.is_absolute() else self.database.parent / stored
             if image_path is None or old_path.resolve() != image_path.resolve():
                 try:
-                    old_path.unlink()
+                    self._remove_asset(str(old_path))
                 except FileNotFoundError:
                     pass
-        return CachedPoiHint(hint, self._datetime(now), image_path)
+        return self.get(hint.poi_id)
+
+    def _asset_path(self, stored):
+        path = (self.database.parent / stored).resolve()
+        if not path.is_relative_to(self.cache_dir.resolve()):
+            raise ValueError("Hint asset is outside cache directory")
+        return path
+
+    def _remove_asset(self, stored):
+        self._asset_path(stored).unlink(missing_ok=True)
+
+    def gallery_image(self, poi_id, index, url, download):
+        if index == 0:
+            cached = self.get(poi_id)
+            if cached and cached.image_path: return cached.image_path
+        with self._lock, closing(self._connect()) as db, db:
+            row = db.execute("SELECT relative_path FROM poi_hint_gallery WHERE poi_id=? AND ordinal=? AND image_url=?", (poi_id,index,url)).fetchone()
+            if row and row[0] and self._asset_path(row[0]).is_file():
+                db.execute("UPDATE poi_hint_gallery SET last_accessed_at=? WHERE poi_id=? AND ordinal=?", (datetime.now(timezone.utc).isoformat(),poi_id,index))
+                return self._asset_path(row[0])
+        body,mime,suffix = download(url)
+        digest = hashlib.sha256(body).hexdigest()
+        path = self.cache_dir / (re.sub(r"[^A-Za-z0-9_.-]", "_", poi_id) + f"-g{index}-{digest[:12]}{suffix}")
+        fd, temporary = tempfile.mkstemp(dir=self.cache_dir, prefix=".gallery-")
+        try:
+            with os.fdopen(fd,"wb") as stream:
+                stream.write(body); stream.flush(); os.fsync(stream.fileno())
+            os.replace(temporary,path)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, closing(self._connect()) as db, db:
+            db.execute("UPDATE poi_hint_gallery SET relative_path=?,mime_type=?,size_bytes=?,sha256=?,fetched_at=?,last_accessed_at=? WHERE poi_id=? AND ordinal=? AND image_url=?",
+                       (os.path.relpath(path,self.database.parent),mime,len(body),digest,now,now,poi_id,index,url))
+        return path
 
     def prune(self, max_bytes: int, protected_poi_id: str | None = None) -> None:
         with self._lock, closing(self._connect()) as connection, connection:
             rows = connection.execute(
-                "SELECT * FROM poi_hint_assets ORDER BY last_accessed_at ASC"
+                "SELECT *, -1 AS ordinal FROM poi_hint_assets UNION ALL "
+                "SELECT poi_id,relative_path,mime_type,size_bytes,sha256,fetched_at,last_accessed_at,ordinal "
+                "FROM poi_hint_gallery WHERE relative_path IS NOT NULL ORDER BY last_accessed_at ASC"
             ).fetchall()
             total = sum(int(row["size_bytes"]) for row in rows)
             for row in rows:
@@ -352,10 +425,13 @@ class SqlitePoiHintRepository:
                 stored = Path(str(row["relative_path"]))
                 path = stored if stored.is_absolute() else self.database.parent / stored
                 try:
-                    path.unlink()
+                    self._remove_asset(str(path))
                 except FileNotFoundError:
                     pass
-                connection.execute("DELETE FROM poi_hint_assets WHERE poi_id = ?", (poi_id,))
+                if row["ordinal"] == -1:
+                    connection.execute("DELETE FROM poi_hint_assets WHERE poi_id = ?", (poi_id,))
+                else:
+                    connection.execute("UPDATE poi_hint_gallery SET relative_path=NULL,size_bytes=NULL WHERE poi_id=? AND ordinal=?", (poi_id,row["ordinal"]))
                 total -= int(row["size_bytes"])
 
 
@@ -379,6 +455,24 @@ class PoiHintService:
         self._future_poi_id: str | None = None
         self._snapshot = PoiHintSnapshot(None, HintState.IDLE)
         self._memory: dict[str, CachedPoiHint] = {}
+        self._image_future = None
+        self._image_request = None
+
+    def select_image(self, index: int):
+        hint = self._snapshot.hint
+        if hint is None or not 0 <= index < len(hint.images): return
+        if self._image_future: self._image_future.cancel()
+        self._snapshot = replace(self._snapshot, image_index=index, image_path=None, message="Загрузка изображения…")
+        self._image_request = (hint.poi_id,index,hint.images[index])
+        if self.repository is None:
+            self._snapshot = replace(self._snapshot,message="Галерея требует SQLite-кэша")
+            return
+        self._image_future = self._executor.submit(self._load_image,*self._image_request)
+
+    def _load_image(self, poi_id, index, url):
+        path = self.repository.gallery_image(poi_id,index,url,self.provider.download_image)
+        self.repository.prune(self.max_cache_bytes,poi_id)
+        return path
 
     @property
     def snapshot(self) -> PoiHintSnapshot:
@@ -392,6 +486,9 @@ class PoiHintService:
         poi_id = poi.id if poi is not None else None
         if poi_id == self._snapshot.poi_id:
             return self.snapshot
+        if self._future: self._future.cancel()
+        if self._image_future: self._image_future.cancel()
+        self._image_future = None
         if poi_id is None:
             self._snapshot = PoiHintSnapshot(None, HintState.IDLE)
             return self._snapshot
@@ -406,7 +503,8 @@ class PoiHintService:
             missing_image = bool(cached.hint.image_url and cached.image_path is None)
             fresh = now - cached.fetched_at <= max_age and not missing_image
             message = "Кэш" if fresh else "Кэш · обновление…"
-            self._snapshot = PoiHintSnapshot(poi_id, state, cached.hint, cached.image_path, message)
+            age = max(0, int((now-cached.fetched_at).total_seconds()/86400))
+            self._snapshot = PoiHintSnapshot(poi_id, state, cached.hint, cached.image_path, message + f" · {age} дн.", fetched_at=cached.fetched_at)
             if fresh:
                 return self._snapshot
         else:
@@ -432,6 +530,14 @@ class PoiHintService:
         return cached
 
     def poll(self) -> PoiHintSnapshot:
+        if self._image_future is not None and self._image_future.done():
+            future, request = self._image_future,self._image_request
+            self._image_future = None
+            if request[:2] == (self._snapshot.poi_id,self._snapshot.image_index):
+                try:
+                    self._snapshot = replace(self._snapshot,image_path=future.result(),message="Изображение · офлайн-кэш")
+                except (OSError,ValueError,RuntimeError):
+                    self._snapshot = replace(self._snapshot,message="Изображение недоступно офлайн / ошибка загрузки")
         future = self._future
         if future is None or not future.done():
             return self._snapshot
@@ -457,7 +563,9 @@ class PoiHintService:
                 message = "Онлайн · JSON-режим без постоянного кэша"
             else:
                 message = "HoYoLAB · сохранено офлайн"
-            self._snapshot = PoiHintSnapshot(poi_id, HintState.READY, cached.hint, cached.image_path, message)
+            selected_index=self._snapshot.image_index
+            self._snapshot = PoiHintSnapshot(poi_id, HintState.READY, cached.hint, cached.image_path, message, fetched_at=cached.fetched_at)
+            if selected_index: self.select_image(min(selected_index,len(cached.hint.images)-1))
         return self._snapshot
 
     def close(self) -> None:
