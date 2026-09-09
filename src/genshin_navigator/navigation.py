@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import atan2, degrees
 from pathlib import Path
 
@@ -11,6 +11,7 @@ from .calibration import DistanceCalibration
 from .poi import PointOfInterest, PoiRepository, ProgressRepository
 from .position import CoordinateSpace, MapPosition, PositionState
 from .tracker import TrackerSnapshot
+from .categories import progress_kind, ProgressKind
 
 
 SpaceKey = tuple[str, str, CoordinateSpace]
@@ -109,9 +110,16 @@ class NavigationController:
         calibration: DistanceCalibration | None = None,
         preferences_store: NavigationPreferencesStore | None = None,
         max_target_distance_m: float | None = None,
+        outing_progress=None,
+        plan_repository=None,
     ):
         self.catalog = catalog
         self.progress = progress
+        self.outing_progress = outing_progress
+        self.plan_repository = plan_repository
+        self.active_plan = (plan_repository.active(catalog.pois[0].region_id)
+                            if plan_repository is not None and catalog.pois else None)
+        self._plan_undo = {}
         default_kinds = set(target_kinds or ())
         self.available_target_kinds = set(available_target_kinds or default_kinds)
         self.preferences_store = preferences_store
@@ -145,6 +153,8 @@ class NavigationController:
 
     def _eligible(self, position: MapPosition) -> list[tuple[PointOfInterest, float]]:
         excluded = self.progress.collected_ids | self.skipped_ids | self.blacklisted_ids
+        if self.outing_progress is not None:
+            excluded = excluded | self.outing_progress.collected_ids
         candidates = self.catalog.nearest(
             position,
             kinds=self.target_kinds,
@@ -215,6 +225,10 @@ class NavigationController:
             return False
         if not any(row.poi.id == identifier for row in self.candidates()):
             return False
+        if self.active_plan is not None:
+            if identifier not in self.active_plan.poi_ids:
+                return False
+            self._set_plan_step(self.active_plan.poi_ids.index(identifier))
         self._selected_by_space[self._active_key] = identifier
         self._save_preferences()
         return True
@@ -237,6 +251,10 @@ class NavigationController:
         position = self._last_position_by_space.get(key)
         if position is None:
             return None
+        if self.active_plan is not None:
+            self._plan_undo[len(self._history)] = self.active_plan
+            self._set_plan_step(min(len(self.active_plan.poi_ids),self.active_plan.current_step+1))
+            return self._target_for(position)
         order = self._orders.get(key, [])
         index = order.index(removed_id) if removed_id in order else -1
         eligible = {poi.id for poi, _ in self._eligible(position)}
@@ -310,6 +328,24 @@ class NavigationController:
 
     def _target_for(self, position: MapPosition) -> PointOfInterest | None:
         key = self._key(position)
+        if self.active_plan is not None:
+            plan = self.active_plan
+            self._selected_by_space.pop(key,None)
+            if plan.space_key != (key[0],key[1],key[2].value):
+                return None
+            excluded = self.progress.collected_ids | self.skipped_ids | self.blacklisted_ids
+            if self.outing_progress is not None:
+                excluded |= self.outing_progress.collected_ids
+            by_id = {p.id:p for p in self.catalog.on_layer(position)}
+            for index in range(plan.current_step,len(plan.poi_ids)):
+                identifier = plan.poi_ids[index]
+                if identifier not in excluded and identifier in by_id:
+                    if index != self.active_plan.current_step:
+                        self._set_plan_step(index)
+                    self._selected_by_space[key] = identifier
+                    return by_id[identifier]
+            self._set_plan_step(len(plan.poi_ids))
+            return None
         selected_id = self._selected_by_space.get(key)
         candidates = self._ordered(position)
         by_id = {poi.id: poi for poi, _ in candidates}
@@ -392,6 +428,20 @@ class NavigationController:
         position = self._last_position_by_space.get(self._active_key)
         if position is None:
             return self.current_target
+        if self.active_plan is not None:
+            if offset < 0:
+                excluded = self.progress.collected_ids | self.skipped_ids | self.blacklisted_ids
+                if self.outing_progress is not None:
+                    excluded |= self.outing_progress.collected_ids
+                available = {poi.id for poi in self.catalog.on_layer(position)} - excluded
+                previous = next((index for index in range(self.active_plan.current_step - 1, -1, -1)
+                                 if self.active_plan.poi_ids[index] in available), None)
+                if previous is None:
+                    return self.current_target
+                self._set_plan_step(previous)
+                return self._target_for(position)
+            self._set_plan_step(max(0,min(len(self.active_plan.poi_ids),self.active_plan.current_step+offset)))
+            return self._target_for(position)
         candidates = [poi for poi, _ in self._ordered(position)]
         if not candidates:
             self._selected_by_space.pop(self._active_key, None)
@@ -424,21 +474,57 @@ class NavigationController:
         target = self.current_target
         if target is None or self._active_key is None or not self._selection_ready:
             return None
-        self.progress.mark_collected(target.id)
-        self._history.append(("collected", target.id, self._active_key))
+        semantics = progress_kind(target.kind)
+        if semantics is ProgressKind.LANDMARK:
+            self.skipped_ids.add(target.id)
+            self._history.append(("skip", target.id, self._active_key))
+        elif semantics is ProgressKind.OUTING:
+            if self.outing_progress is None:
+                return None
+            self.outing_progress.mark_collected(target.id)
+            self._history.append(("outing", target.id, self._active_key))
+        elif semantics is ProgressKind.PERMANENT:
+            self.progress.mark_collected(target.id)
+            self._history.append(("collected", target.id, self._active_key))
+        else:
+            return None
         return self._advance_removed(target.id)
 
     def undo(self) -> PointOfInterest | None:
         if not self._history:
             return self.current_target
+        plan_before = self._plan_undo.pop(len(self._history),None)
         action, poi_id, key = self._history.pop()
         if action == "skip":
             self.skipped_ids.discard(poi_id)
         elif action == "blacklist":
             self.blacklisted_ids.discard(poi_id)
             self._save_preferences()
+        elif action == "outing":
+            self.outing_progress.unmark_collected(poi_id)
         else:
             self.progress.unmark_collected(poi_id)
         self._selected_by_space[key] = poi_id
+        if plan_before is not None and self.active_plan is not None and plan_before.plan_id == self.active_plan.plan_id:
+            self.plan_repository.save(plan_before,allow_missing=True)
+            self.active_plan = plan_before
         self._save_preferences()
         return self.current_target
+
+    def _set_plan_step(self, step):
+        if self.active_plan.current_step == step:
+            return
+        candidate = replace(self.active_plan,current_step=step)
+        self.plan_repository.save(candidate,allow_missing=True)
+        self.active_plan = candidate
+
+    def activate_plan(self, plan_id):
+        if self.plan_repository is None:
+            raise ValueError("Планы требуют SQLite")
+        region = self.catalog.pois[0].region_id if self.catalog.pois else None
+        if region is None:
+            raise ValueError("Каталог пуст")
+        self.plan_repository.activate(region,plan_id)
+        self.active_plan = self.plan_repository.active(region)
+        self._plan_undo.clear()
+        self._orders.clear()

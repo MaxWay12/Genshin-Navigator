@@ -194,7 +194,8 @@ class SqliteProgressSyncStore:
             known = {
                 str(row[0])
                 for row in connection.execute(
-                    "SELECT poi_id FROM pois WHERE region_id = ?", (region_id,)
+                    "SELECT i.poi_id FROM pois i JOIN poi_categories c USING(kind) "
+                    "WHERE i.region_id = ? AND c.progress_kind='permanent'", (region_id,)
                 )
             }
             progress = {
@@ -205,7 +206,8 @@ class SqliteProgressSyncStore:
                 )
                 for row in connection.execute(
                     "SELECT p.* FROM progress p JOIN pois i ON i.poi_id=p.poi_id "
-                    "WHERE i.region_id = ?", (region_id,)
+                    "JOIN poi_categories c ON c.kind=i.kind "
+                    "WHERE i.region_id = ? AND c.progress_kind='permanent'", (region_id,)
                 )
             }
         return known, progress
