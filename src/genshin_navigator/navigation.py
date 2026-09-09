@@ -232,6 +232,7 @@ class NavigationController:
         region=position.region_id if position else (self.catalog.pois[0].region_id if self.catalog.pois else None)
         collected=self.progress.collected_ids | (self.outing_progress.collected_ids if self.outing_progress else set())
         result=[]
+        selected=self.current_target
         for poi in self.catalog.pois:
             if poi.region_id!=region or poi.layer_id!=layer_id: continue
             if section=="available" and poi.id in collected|self.skipped_ids|self.blacklisted_ids: continue
@@ -241,7 +242,7 @@ class NavigationController:
             usable=bool(self._selection_ready and position and poi.same_space(position))
             distance=self.catalog.world_distance(position,poi) if usable else None
             meters=distance*self.calibration.meters_per_world_unit if distance is not None and self.calibration and self.calibration.supports_region(region) else None
-            result.append(TargetCandidate(poi,meters,bool(self.current_target and self.current_target.id==poi.id),usable and section=="available"))
+            result.append(TargetCandidate(poi,meters,bool(selected and selected.id==poi.id),usable and section=="available"))
         return tuple(result)
 
     def select_target(self, identifier: str) -> bool:

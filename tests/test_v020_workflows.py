@@ -89,7 +89,10 @@ class ExplorationWorkflows(unittest.TestCase):
         p=MapPosition('mondstadt','surface',CS.SURFACE_ATLAS,5,5,.9,PositionState.TRACKING,1)
         fix=TrackerSnapshot(PositionState.TRACKING,5,5,5,5,.9,None,'surface',True,False,None,p)
         nav.update(fix); before=nav.current_target
-        rows=nav.browse_candidates('floor1')
+        from unittest.mock import patch, PropertyMock
+        with patch.object(NavigationController,'current_target',new_callable=PropertyMock,return_value=before) as selected:
+            rows=nav.browse_candidates('floor1')
+            self.assertEqual(selected.call_count,1)
         self.assertEqual(len(rows),1); self.assertFalse(rows[0].selectable)
         self.assertFalse(nav.select_target(rows[0].poi.id)); self.assertEqual(nav.current_target,before)
         nav.update(replace(fix,stale=True))
