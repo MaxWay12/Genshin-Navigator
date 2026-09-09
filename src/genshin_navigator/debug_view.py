@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 
 import ctypes
 import queue
@@ -21,6 +22,7 @@ from .hotkeys import (
 )
 from .hud import HudStateStore, WindowGeometry, build_hud_presentation
 from .navigation import NavigationController, NavigationSnapshot
+from .map_viewport import MapViewport
 from .poi import PointOfInterest, PoiRepository, ProgressRepository
 from .poi_guidance import HintState, PoiHintService, PoiHintSnapshot
 from .performance import PerformanceSnapshot
@@ -79,6 +81,8 @@ class DebugMapView:
         details_width: int | None = None,
         details_height: int = 650,
         report_callback: Callable[[], bool] | None = None,
+        trace_callback=None,
+        trace_status=None,
         progress_status: Callable[[], dict[str, object]] | None = None,
         tray_enabled: bool = True,
         tray_controller: TrayController | None = None,
@@ -126,6 +130,8 @@ class DebugMapView:
         self._quit_requested = False
         self._paused = False
         self._report_callback = report_callback
+        self._trace_callback = trace_callback
+        self._trace_status = trace_status
         self._progress_status_supplier = progress_status
         self._progress_status_cache: dict[str, object] = {}
         self._progress_status_at = 0.0
@@ -265,7 +271,7 @@ class DebugMapView:
             )
             cv2.resizeWindow(self.window_name, *size)
         elif self.base.size:
-            cv2.resizeWindow(self.window_name, self.base.shape[1] + 360, max(600, self.base.shape[0] + 112))
+            cv2.resizeWindow(self.window_name, self.base.shape[1] + 360, max(600, self.base.shape[0] + 142))
 
     def _select_layer(self, layer_id: str | None) -> None:
         selected = layer_id if layer_id in self._layers else "surface"
@@ -276,6 +282,10 @@ class DebugMapView:
         self.scale = min((self.max_width - 360) / source_width, self.max_height / source_height, 1.0)
         size = (max(1, round(source_width * self.scale)), max(1, round(source_height * self.scale)))
         self.base = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
+        self._viewport = MapViewport.fit(size[0], size[1], source_width, source_height)
+        self._viewport_cache_key = None
+        self._map_drag = None
+        self._map_dragged = False
         self._active_layer_id = selected
         if self._mode == "map":
             self._apply_window_mode()
@@ -313,6 +323,9 @@ class DebugMapView:
             handle = self._window_handle()
             if handle:
                 ctypes.windll.user32.ShowWindow(handle, 5)
+            return
+        if action is HotkeyAction.TOGGLE_TRACE:
+            self._show_toast(self._trace_callback() if self._trace_callback else "Запись недоступна")
             return
         if action is HotkeyAction.REPORT_ISSUE:
             accepted = self._report_callback() if self._report_callback else False
@@ -392,8 +405,12 @@ class DebugMapView:
             self._show_toast("Отметка отменена")
         elif status.confirmed and self._navigation is not None:
             self._mouse_collect = False
+            from .categories import progress_kind, ProgressKind
+            semantics = progress_kind(navigation.target.kind) if navigation and navigation.target else None
             self._navigation.mark_collected()
-            self._show_toast("Сохранено локально · ожидает sync")
+            self._show_toast("Ориентир посещён · без удалённой отметки" if semantics is ProgressKind.LANDMARK
+                             else "Отмечено в текущей вылазке · без sync" if semantics is ProgressKind.OUTING
+                             else "Сохранено локально · ожидает sync")
 
     def _mouse_still_on_collect(self) -> bool:
         if self._locked or self._mode != "hud":
@@ -443,8 +460,7 @@ class DebugMapView:
             ord("-"): HotkeyAction.BLACKLIST_TARGET,
         }
         if key in (ord("m"), ord("M")) and self._navigation is not None:
-            self._navigation.mark_collected()
-            self._show_toast("Сундук отмечен собранным")
+            self._show_toast("Для отметки удерживайте Num5 / Ctrl+Alt+Space или кнопку мыши")
         elif key in local_actions:
             self._dispatch_action(local_actions[key], navigation)
         for action in self._hotkeys.poll() if self._hotkeys is not None else []:
@@ -496,6 +512,10 @@ class DebugMapView:
             toast=self._toast if time.monotonic() < self._toast_until else "",
             performance=performance,
         )
+        trace_status = self._trace_status() if getattr(self,"_trace_status",None) else ""
+        if trace_status.startswith("●"):
+            cv2.circle(panel,(8,8),4,(50,50,245),-1)
+            cv2.putText(panel,"REC",(16,12),cv2.FONT_HERSHEY_SIMPLEX,.3,(70,70,255),1)
         return panel
 
     def _progress_status(self) -> dict[str, object]:
@@ -615,7 +635,16 @@ class DebugMapView:
         paused_reason: str | None,
         performance: PerformanceSnapshot | None = None,
     ) -> np.ndarray:
-        canvas = cv2.copyMakeBorder(self.base, 0, 112, 0, 0, cv2.BORDER_CONSTANT, value=(18, 18, 18))
+        if self._viewport.following and navigation and navigation.available and navigation.position:
+            self._viewport = self._viewport.centered(navigation.position.x, navigation.position.y, follow=True)
+        if self._viewport_cache_key != self._viewport:
+            view = self._viewport
+            tx, ty = view.to_screen(0, 0)
+            self._viewport_background = cv2.warpAffine(
+                self._layers[self._active_layer_id], np.float64([[view.scale,0,tx],[0,view.scale,ty]]),
+                (view.width, view.height), flags=cv2.INTER_LINEAR, borderValue=(18,18,18))
+            self._viewport_cache_key = view
+        canvas = cv2.copyMakeBorder(self._viewport_background, 0, 142, 0, 0, cv2.BORDER_CONSTANT, value=(18, 18, 18))
         colors = {TrackerState.TRACKING: (80, 220, 80), TrackerState.ACQUIRING: (40, 210, 240), TrackerState.RELOCATING: (30, 150, 255), TrackerState.LOST: (60, 60, 230)}
         color = (150, 150, 150) if paused_reason else colors[snapshot.state]
         layer_poi_count = 0
@@ -623,19 +652,25 @@ class DebugMapView:
             layer_pois = [poi for poi in self._poi_catalog.on_layer(snapshot.position) if self._poi_kinds is None or poi.kind in self._poi_kinds if self._poi_progress is None or poi.id not in self._poi_progress.collected_ids]
             layer_poi_count = len(layer_pois)
             for poi in layer_pois:
-                cv2.circle(canvas, (round(poi.x * self.scale), round(poi.y * self.scale)), 2, self._poi_color(poi), -1)
+                point = tuple(round(v) for v in self._viewport.to_screen(poi.x, poi.y))
+                if 0 <= point[0] < self.base.shape[1] and 0 <= point[1] < self.base.shape[0]:
+                    cv2.circle(canvas, point, 2, self._poi_color(poi), -1)
         target_point = None
         if navigation is not None and navigation.target is not None:
             poi = navigation.target
-            target_point = (round(poi.x * self.scale), round(poi.y * self.scale))
+            target_point = tuple(round(v) for v in self._viewport.to_screen(poi.x, poi.y))
             cv2.circle(canvas, target_point, 9, (255, 255, 255) if navigation.available else (150, 150, 150), 2)
         if snapshot.x_px is not None and snapshot.y_px is not None:
-            point = (round(snapshot.x_px * self.scale), round(snapshot.y_px * self.scale))
+            point = tuple(round(v) for v in self._viewport.to_screen(snapshot.x_px, snapshot.y_px))
             cv2.circle(canvas, point, 9, (10, 10, 10), 3)
             cv2.circle(canvas, point, 7, color, -1)
             if target_point is not None:
                 cv2.line(canvas, point, target_point, (255, 235, 180) if navigation and navigation.available else (150, 150, 150), 2, cv2.LINE_AA)
         y = self.base.shape[0]
+        trace_status = self._trace_status() if getattr(self,"_trace_status",None) else ""
+        if trace_status:
+            self._put_unicode_text(canvas,trace_status,(10,8),(100,180,255))
+        self._put_unicode_text(canvas, "Сброс       К игроку       К цели       Следить: " + ("да" if self._viewport.following else "нет") + "      Запись", (10,y+116), (180,220,185))
         state = "PAUSED" if paused_reason else snapshot.state.value
         perf = "" if performance is None else f"  CV={performance.processing_ms or 0:.0f}ms/{performance.search_mode}/{performance.mode}"
         cv2.putText(canvas, f"{state}  confidence={snapshot.confidence:.2f}  fps={fps:.1f}{perf}", (12, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
@@ -683,10 +718,46 @@ class DebugMapView:
                     self._dispatch_action(hit.action, self._last_navigation)
                 self._mouse_pressed_action = None
             return
-        if event != cv2.EVENT_LBUTTONUP or self._mode != "map" or self._locked or self._navigation is None:
+        if self._mode != "map" or self._locked or self._navigation is None:
+            return
+        inside = 0 <= x < self.base.shape[1] and 0 <= y < self.base.shape[0]
+        if event == cv2.EVENT_MOUSEWHEEL and inside:
+            delta = (flags >> 16) & 0xffff
+            if delta >= 32768: delta -= 65536
+            self._viewport = self._viewport.zoom(1.2 if delta > 0 else 1/1.2,x,y)
+            return
+        if event == cv2.EVENT_LBUTTONDOWN and inside:
+            self._map_drag = (x,y); self._map_dragged = False
+            return
+        if event == cv2.EVENT_MOUSEMOVE and self._map_drag is not None:
+            dx,dy = x-self._map_drag[0],y-self._map_drag[1]
+            if self._map_dragged or abs(dx)+abs(dy) > 4:
+                self._viewport = self._viewport.pan(dx,dy)
+                self._map_drag = (x,y); self._map_dragged = True
+            return
+        if event != cv2.EVENT_LBUTTONUP:
+            return
+        self._map_drag = None
+        if self._map_dragged:
+            self._map_dragged = False
+            return
+        if x < self.base.shape[1] and y >= self.base.shape[0]+112:
+            nav = self._last_navigation
+            if x < 90:
+                image = self._layers[self._active_layer_id]
+                self._viewport = MapViewport.fit(self.base.shape[1],self.base.shape[0],image.shape[1],image.shape[0])
+            elif x < 190 and nav and nav.available and nav.position:
+                self._viewport = self._viewport.centered(nav.position.x,nav.position.y)
+            elif x < 280 and nav and nav.target:
+                self._viewport = self._viewport.centered(nav.target.x,nav.target.y)
+            elif x >= 430:
+                self._dispatch_action(HotkeyAction.TOGGLE_TRACE,nav)
+            elif x >= 280:
+                self._viewport = replace(self._viewport,following=not self._viewport.following)
             return
         if x < self.base.shape[1] and y < self.base.shape[0]:
-            matches = marker_hits(self._navigation.candidates(), x, y, self.scale)
+            matches = tuple(row.poi.id for row in self._navigation.candidates()
+                            if sum((a-b)**2 for a,b in zip(self._viewport.to_screen(row.poi.x,row.poi.y),(x,y))) <= 64)
             if len(matches) == 1:
                 self._navigation.select_target(matches[0])
             elif matches:

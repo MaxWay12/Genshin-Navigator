@@ -45,7 +45,7 @@ class LauncherService:
     def _example(self, region: str) -> Path:
         if region == "sumeru_desert" and "sumeru" in self.paths:
             region = "sumeru"
-        name = {"fontaine": "config.example.json", "sumeru": "config.sumeru-full.example.json"}.get(
+        name = {"mondstadt": "config.mondstadt.example.json", "fontaine": "config.example.json", "sumeru": "config.sumeru-full.example.json"}.get(
             region, "config.sumeru.example.json")
         return self.root / name
 
@@ -89,6 +89,7 @@ class LauncherService:
                 "alternative": config.navigation.alternative_hotkeys.enabled,
                 "width": config.navigation.hud_width, "height": config.navigation.hud_height,
                 "tray": config.navigation.tray_enabled, "assets": assets, "roi": roi,
+                "poi_kinds": list(config.poi.kinds),
                 "bindings": {key: f"Ctrl+Alt+{chr(vk)}" for key, vk in config.navigation.alternative_hotkeys.bindings.items()}}
 
     def save(self, region: str, values: dict) -> None:
@@ -98,6 +99,13 @@ class LauncherService:
             if not isinstance(values.get(key), bool):
                 raise ValueError("Некорректный переключатель настройки")
         raw.setdefault("performance", {})["mode"] = values["mode"]
+        if "poi_kinds" in values:
+            from .categories import CATEGORY_BY_KIND
+            kinds = values["poi_kinds"]
+            if not isinstance(kinds,list) or not kinds or any(k not in CATEGORY_BY_KIND for k in kinds):
+                raise ValueError("Выберите известные категории объектов")
+            raw.setdefault("poi",{})["kinds"] = list(dict.fromkeys(kinds))
+            raw["poi"]["target_kinds"] = [k for k in raw["poi"].get("target_kinds",[]) if k in kinds] or [kinds[0]]
         navigation = raw.setdefault("navigation", {})
         navigation.update(numpad_enabled=values["numpad"], tray_enabled=values["tray"],
                           global_hotkeys=values["numpad"] or values["alternative"],
@@ -130,9 +138,10 @@ class LauncherBridge:
         self._ready_installation = None
         self._launch_installation = None
         self._import_plan = None
+        self._hoyo_child = None
 
     def initial(self):
-        region = next(iter(self._service.regions))
+        region = "fontaine" if "fontaine" in self._service.regions else next(iter(self._service.regions))
         try:
             saved = json.loads(self._service.state_path.read_text(encoding="utf-8"))
             if saved.get("region") == "sumeru_desert" and "sumeru" in self._service.regions:
@@ -317,6 +326,121 @@ class LauncherBridge:
         self._import_plan = None
         return self._background(lambda: service.apply_import(plan))
 
+    def hoyolab(self, region, action):
+        if action not in {"login","logout","status","sync"}:
+            raise ValueError("Неизвестное действие HoYoLAB")
+        if self._hoyo_child is not None:
+            raise ValueError("Подтвердите или отмените предыдущий preview")
+        config = self._service.config_path(region)
+        def request():
+            command = [sys.executable] if getattr(sys,"frozen",False) else [sys.executable,"-m","genshin_navigator"]
+            child = subprocess.Popen(command+["hoyolab-gui","--config",str(config),"--action",action],
+                                     cwd=self._service.root,stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL,text=True,encoding="utf-8",
+                                     creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+            self._hoyo_child = child
+            try:
+                payload = json.loads(child.stdout.readline())
+                if action == "sync" and "preview" in payload:
+                    return {"hoyolab": payload}
+                child.wait(timeout=10)
+                child.stdin.close(); child.stdout.close()
+                self._hoyo_child = None
+                return {"hoyolab": payload}
+            except Exception:
+                child.terminate(); child.wait(timeout=5)
+                self._hoyo_child = None
+                raise ValueError("Не удалось завершить окно HoYoLAB") from None
+        return self._background(request)
+
+    def confirm_hoyolab(self, confirmed):
+        if type(confirmed) is not bool or self._hoyo_child is None:
+            raise ValueError("Сначала получите preview")
+        def apply():
+            child = self._hoyo_child
+            try:
+                child.stdin.write("apply\n" if confirmed else "cancel\n"); child.stdin.flush()
+                result = json.loads(child.stdout.readline()) if confirmed else {"cancelled": True}
+                child.wait(timeout=10)
+                return {"hoyolab": result}
+            finally:
+                if child.poll() is None:
+                    child.terminate(); child.wait(timeout=5)
+                child.stdin.close(); child.stdout.close()
+                self._hoyo_child = None
+        return self._background(apply)
+
+    def _closing(self):
+        if self._operation["busy"]:
+            return False
+        child = self._hoyo_child
+        if child is not None:
+            # An idle child is waiting for preview confirmation, never pushing.
+            child.stdin.close()
+            try:
+                child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                child.terminate(); child.wait(timeout=3)
+            child.stdout.close()
+            self._hoyo_child = None
+
+    def _collections(self, region):
+        from .collection_plans import CollectionPlanRepository
+        from .application import load_runtime_data
+        config = load_config(self._service.config_path(region))
+        data = load_runtime_data(config)
+        if data is None or data.backend != "sqlite":
+            raise ValueError("Планы и вылазки требуют подготовленной SQLite-базы")
+        return CollectionPlanRepository(config.data.database_path), config, data
+
+    def collection_data(self, region):
+        def read():
+            from .outing_progress import catalog_statistics
+            repo, config, data = self._collections(region)
+            active = repo.active(config.data.region_id)
+            return {"collections": {"plans": [p.to_dict() for p in repo.list(config.data.region_id)],
+                    "active_id": active.plan_id if active else None,
+                    "spaces": [list(k) for k in sorted({(p.layer_id,p.coordinate_space.value) for p in data.catalog.pois})],
+                    "pois": [p.to_dict() for p in data.catalog.pois],
+                    "statistics": catalog_statistics(config.data.database_path,config.data.region_id)}}
+        return self._background(read)
+
+    def save_collection_plan(self, region, payload):
+        def save():
+            from .collection_plans import CollectionPlan
+            from uuid import uuid4
+            repo, config, _ = self._collections(region)
+            if not isinstance(payload,dict):
+                raise ValueError("Некорректный план")
+            candidate = dict(payload,format_version=1,region_id=config.data.region_id)
+            if not candidate.get("plan_id"):
+                candidate["plan_id"] = uuid4().hex
+            else:
+                previous = repo.get(candidate["plan_id"])
+                if previous.region_id != config.data.region_id:
+                    raise ValueError("План другого региона")
+            plan = CollectionPlan.from_dict(candidate)
+            repo.save(plan)
+            return {"saved_plan": plan.to_dict()}
+        return self._background(save)
+
+    def activate_collection_plan(self, region, identifier):
+        def activate():
+            repo, config, _ = self._collections(region)
+            repo.activate(config.data.region_id,identifier or None)
+            return {"collection_mode": "plan" if identifier else "free"}
+        return self._background(activate)
+
+    def reset_outing(self, region, confirmed):
+        if confirmed is not True:
+            raise ValueError("Подтвердите начало новой вылазки")
+        def reset():
+            from .outing_progress import OutingProgress
+            _, config, _ = self._collections(region)
+            OutingProgress(config.data.database_path).reset(config.data.region_id)
+            return {"outing_reset": True}
+        return self._background(reset)
+
     def open_diagnostics(self):
         folder = self._service.root / "datasets/local/diagnostics"
         folder.mkdir(parents=True, exist_ok=True)
@@ -333,7 +457,7 @@ def run_launcher(root: str | Path | None = None) -> int:
         bridge._window = webview.create_window("Genshin Navigator", html=html, js_api=bridge,
                                              width=820, height=620, min_size=(720, 560), background_color="#11171b")
         # A running transfer/setup must finish before its process can close.
-        bridge._window.events.closing += lambda: False if bridge._operation["busy"] else None
+        bridge._window.events.closing += bridge._closing
         webview.start(gui="edgechromium", private_mode=True)
         if bridge._launch_args:
             spawn_command(service.root, bridge._launch_args)

@@ -59,6 +59,9 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     launcher = subparsers.add_parser("launcher", help="Open Navigator settings and launcher")
     launcher.add_argument("--root", default=None)
+    hoyo_gui = subparsers.add_parser("hoyolab-gui", help=argparse.SUPPRESS)
+    hoyo_gui.add_argument("--config", default="config.json")
+    hoyo_gui.add_argument("--action", choices=("login","logout","status","sync"), required=True)
 
     capture = subparsers.add_parser("capture", help="Save a desktop screenshot for ROI setup")
     capture.add_argument("--output", default="artifacts/screen.png")
@@ -340,7 +343,7 @@ def _sync_data(config: AppConfig, region_id: str, map_version: str | None) -> di
         area_id=config.data.area_id, label_kinds=DEFAULT_LABEL_KINDS,
     )
     metrics = build_space_metrics(surface, underground)
-    if region_id == "sumeru" and (stats["skipped_unknown_floor"] or not pois):
+    if region_id in {"sumeru", "mondstadt"} and (stats["skipped_unknown_floor"] or not pois):
         raise ValueError("Incomplete Sumeru catalog; run setup-region before syncing")
     version = content_version_for(
         labels, points, explicit_version=requested_version,
@@ -607,6 +610,9 @@ def main(argv: list[str] | None = None) -> int:
             config_path = entry.config_path
             args.region = entry.id
         config = load_config(config_path)
+        if args.command == "hoyolab-gui":
+            from .launcher_hoyolab import run
+            return run(config,args.action)
         if args.command == "roi-check":
             report = check_config_roi(config).to_dict()
             print(json.dumps(report, ensure_ascii=False, indent=2))

@@ -24,6 +24,8 @@ from .matcher import LocateResult, MinimapMatcher
 from .motion_localization import RelativeMotionLocalizer
 from .storage_schema import SCHEMA_VERSION
 from .navigation import NavigationController, NavigationPreferencesStore
+from .outing_progress import OutingProgress
+from .collection_plans import CollectionPlanRepository
 from .performance import LocalizationScheduler, PerformanceMonitor
 from .poi_guidance import HoyoLabPoiHintProvider, PoiHintService, SqlitePoiHintRepository
 from .pyramid import Locator, PyramidMatcher, load_pyramid
@@ -86,7 +88,7 @@ class LiveApplication:
         self.locator = locator or build_locator(config)
 
     def _view(
-        self, data: DataBundle | None, report_callback=None
+        self, data: DataBundle | None, report_callback=None, trace_callback=None, trace_status=None
     ) -> DebugMapView:
         config, locator = self.config, self.locator
         if config.debug_map_path is None:
@@ -116,6 +118,8 @@ class LiveApplication:
                     config.navigation.navigation_state_path
                 ),
                 max_target_distance_m=config.navigation.max_target_distance_m,
+                outing_progress=OutingProgress(config.data.database_path) if data.backend == "sqlite" else None,
+                plan_repository=CollectionPlanRepository(config.data.database_path) if data.backend == "sqlite" else None,
             )
             if catalog is not None and progress is not None and config.navigation.enabled
             else None
@@ -190,6 +194,8 @@ class LiveApplication:
             hotkey_virtual_keys=hotkeys,
             hint_service=hint_service,
             report_callback=report_callback,
+            trace_callback=trace_callback,
+            trace_status=trace_status,
             progress_status=(
                 lambda: data.provider.status(
                     config.data.region_id,
@@ -246,8 +252,11 @@ class LiveApplication:
         recorder = FailureRecorder(config.failure_recorder, self._diagnostic_context(data))
         gate = MinimapScreenGate.from_config(config.screen_gate) if config.screen_gate.enabled else None
         worker = LocalizationWorker(config, self.locator, gate, recorder)
-        view = self._view(data, worker.request_report)
         snapshot = LiveTracker(config.tracker).pause(time.perf_counter(), "starting")
+        from .route_recording import RouteRecordingSession
+        trace = RouteRecordingSession(config,sqlite_available=bool(data and data.backend == "sqlite"),
+                                      content_version=str(data.provider.status(config.data.region_id)["content_version"]) if data and data.provider else "unknown")
+        view = self._view(data, worker.request_report, lambda: trace.toggle(snapshot), lambda: trace.status)
         previous = time.perf_counter()
         last_incident = None
         worker.start()
@@ -263,6 +272,7 @@ class LiveApplication:
                         view.notify(f"Diagnostic: {last_incident.parent.name}/{last_incident.name}", 6.0)
                 if view.paused:
                     snapshot = replace(snapshot, stale=True, accepted=False, reason="user_paused")
+                trace.observe(snapshot)
                 elapsed = max(started - previous, 1e-6)
                 previous = started
                 if not view.show(snapshot, 1.0 / elapsed,
@@ -272,6 +282,7 @@ class LiveApplication:
                 self._wait(started, 0.05)
         finally:
             worker.close()
+            trace.close()
             view.close()
             if getattr(view, "settings_requested", False):
                 from .launcher import spawn_command, installation_root

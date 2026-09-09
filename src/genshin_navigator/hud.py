@@ -18,6 +18,7 @@ class HudPresentation:
     state: str
     bearing_degrees: float | None
     available: bool
+    collect_label: str = "Собрать"
 
 
 def build_hud_presentation(
@@ -45,7 +46,10 @@ def build_hud_presentation(
             distance = f"≈{navigation.distance_m:.0f} м"
         bearing = navigation.bearing_degrees if available else None
     state = "TRACKING" if available else tracker.state.value
-    return HudPresentation(target, distance, layer, state, bearing, available)
+    from .categories import progress_kind, ProgressKind
+    semantics = progress_kind(navigation.target.kind) if navigation and navigation.target else None
+    label = "Посетил" if semantics is ProgressKind.LANDMARK else "Собрать"
+    return HudPresentation(target, distance, layer, state, bearing, available, label)
 
 
 @dataclass(frozen=True)

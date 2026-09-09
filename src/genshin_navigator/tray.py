@@ -29,6 +29,7 @@ class PystrayBackend:
 
         menu = pystray.Menu(
             pystray.MenuItem("Настройки", lambda _icon, _item: emit(HotkeyAction.OPEN_SETTINGS)),
+            pystray.MenuItem("Запись прогулки: начать / остановить", lambda _icon, _item: emit(HotkeyAction.TOGGLE_TRACE)),
             pystray.MenuItem(
                 "Пауза / продолжить", lambda _icon, _item: emit(HotkeyAction.TOGGLE_PAUSE)
             ),

@@ -29,6 +29,7 @@ class HotkeyAction(str, Enum):
     BLACKLIST_TARGET = "blacklist_target"
     SHOW_HUD = "show_hud"
     OPEN_SETTINGS = "open_settings"
+    TOGGLE_TRACE = "toggle_trace"
 
 
 DEFAULT_HOTKEYS: dict[HotkeyAction, int] = {

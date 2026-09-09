@@ -17,7 +17,7 @@ class HudControlTests(unittest.TestCase):
         view._hud_hits = buttons(360, 150, available=available)
         view._mouse_collect = False
         view._mouse_pressed_action = None
-        view._last_navigation = SimpleNamespace(target=SimpleNamespace(id="chest"), available=available)
+        view._last_navigation = SimpleNamespace(target=SimpleNamespace(id="chest", kind="chest"), available=available)
         view._hold = CollectedHoldController(1.0)
         view._navigation = Mock()
         view._hotkeys = Mock(is_action_down=Mock(return_value=False))

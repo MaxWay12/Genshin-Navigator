@@ -38,7 +38,7 @@ def fit(draw, text, face, width):
     return text + "…" if text else ""
 
 
-def buttons(width, height, *, available, paused=False, locked=True):
+def buttons(width, height, *, available, paused=False, locked=True, collect_label="Собрать"):
     # Small legacy sizes remain usable; normal layout is 360 x 150 or larger.
     sx, sy = width / 360, height / 150
     def rect(a, b, c, d):
@@ -53,7 +53,7 @@ def buttons(width, height, *, available, paused=False, locked=True):
         (Action.PREVIOUS, "‹", "Предыдущая цель · Num4 / Ctrl+Alt+←"),
         (Action.NEXT, "›", "Следующая цель · Num6 / Ctrl+Alt+→"),
         (Action.SKIP, "Пропуск", "Пропустить до закрытия · Num2 / Ctrl+Alt+↓"),
-        (Action.COLLECTED_HOLD, "Собрать", "Удерживать 1 с · Num5 / Ctrl+Alt+Space / мышь"),
+        (Action.COLLECTED_HOLD, collect_label, "Удерживать 1 с · Num5 / Ctrl+Alt+Space / мышь"),
         (Action.UNDO, "Отмена", "Отменить последнее действие · Num8 / Ctrl+Alt+↑"),
         (Action.TOGGLE_DETAILS, "Подсказка", "Открыть / свернуть подсказку · Num7 / Ctrl+Alt+H"),
     )
@@ -97,7 +97,7 @@ def render_compact(presentation, width, height, *, paused=False, locked=True, ho
         draw.polygon([point(20, 0), point(-13, -10), point(-7, 0), point(-13, 10)], fill=accent)
     else:
         draw.text((center[0] - 7 * scale, center[1] - 10 * scale), "—", font=title_face, fill=accent)
-    controls = buttons(width, height, available=fresh, paused=paused, locked=locked)
+    controls = buttons(width, height, available=fresh, paused=paused, locked=locked, collect_label=presentation.collect_label)
     help_text = "Num . / Ctrl+Alt+L — включить кнопки" if locked else "Кнопки активны · можно перетащить окно за заголовок"
     for button in controls:
         active = not locked and button.contains(*(hover or (-1, -1)))
