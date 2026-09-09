@@ -2,6 +2,12 @@
   "format_version": 1,
   "regions": [
     {
+      "id": "mondstadt",
+      "display_name": "Мондштадт и Драконий хребет",
+      "support": "experimental",
+      "config": "config.mondstadt.json"
+    },
+    {
       "id": "fontaine",
       "display_name": "Фонтейн",
       "support": "supported",

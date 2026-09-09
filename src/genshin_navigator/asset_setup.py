@@ -61,6 +61,11 @@ class RegionPreset:
 
 
 PRESETS = {
+    "mondstadt": RegionPreset(
+        "mondstadt", 1, range(0), range(0),
+        "hoyolab_mondstadt_full_n1", "mondstadt.json", "mondstadt_surface_full_n1",
+        underground=True,
+    ),
     "fontaine": RegionPreset(
         "fontaine", 8, range(32, 44), range(12, 24),
         "hoyolab_fontaine_full_n1", "fontaine.json", "fontaine_surface_full_n1",
@@ -127,7 +132,7 @@ def _download_surface(output: Path, preset: RegionPreset) -> dict[str, Any]:
             data = _request_bytes(url)
         except urllib.error.HTTPError as error:
             if error.code == 404:
-                if preset.region_id == "sumeru":
+                if preset.region_id in {"sumeru", "mondstadt"}:
                     raise ValueError(f"Missing Sumeru tile {x},{y}; previous assets preserved") from error
                 return x, y, None
             raise
@@ -194,7 +199,7 @@ def _download_surface(output: Path, preset: RegionPreset) -> dict[str, Any]:
             "matcher": {"max_features": 80000},
         }],
     }
-    if preset.region_id == "sumeru":
+    if preset.region_id in {"sumeru", "mondstadt"}:
         from .surface_sections import build_surface_sections
         pyramid["levels"] = build_surface_sections(atlas, output, preset.region_id)
     (output / "surface_pyramid.json").write_text(
@@ -319,7 +324,7 @@ def region_asset_status(config: AppConfig, region_id: str) -> dict[str, Any]:
     if preset.underground:
         required.append(final_underground / "metadata.json")
     invalid = []
-    if region_id == "sumeru":
+    if region_id in {"sumeru", "mondstadt"}:
         try:
             for manifest_path in [final_surface / "pyramid.json", final_underground / "metadata.json"]:
                 if not manifest_path.is_file():
@@ -391,7 +396,7 @@ def setup_region(
         labels = fetch_labels(map_id=2, lang=config.data.lang, map_version=version)
         points = fetch_points(map_id=2, lang=config.data.lang, map_version=version)
         upstream = None
-        if region_id == "sumeru":
+        if region_id in {"sumeru", "mondstadt"}:
             upstream = fetch_surface_metadata(2, config.data.lang, getattr(config.data, "asset_revision", None))
             tile_x, tile_y = surface_bounds(points, preset.area_id, upstream["origin"])
             preset = replace(preset, tile_x=tile_x, tile_y=tile_y,
@@ -441,7 +446,7 @@ def setup_region(
             area_id=preset.area_id, label_kinds=DEFAULT_LABEL_KINDS,
         )
         spaces = build_space_metrics(metadata, underground_metadata)
-        if region_id == "sumeru" and (stats["skipped_unknown_floor"] or not pois):
+        if region_id in {"sumeru", "mondstadt"} and (stats["skipped_unknown_floor"] or not pois):
             raise ValueError("Incomplete Sumeru POI catalog; previous assets preserved")
         staged_poi = staging / "poi" / preset.poi_file
         write_catalog(
@@ -453,7 +458,7 @@ def setup_region(
         )
 
         notify("Validating and installing the completed region")
-        if region_id == "sumeru":
+        if region_id in {"sumeru", "mondstadt"}:
             from .pyramid import load_pyramid
             # Fail while still in staging, not on the user's next GPS launch.
             checked = load_pyramid(staged_surface / "pyramid.json", config.matcher)

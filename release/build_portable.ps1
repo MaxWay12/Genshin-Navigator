@@ -68,6 +68,7 @@ function Copy-ReleaseDirectory([string]$Relative) {
 Copy-ReleaseFile "config.example.json"
 Copy-ReleaseFile "config.sumeru.example.json"
 Copy-ReleaseFile "config.sumeru-full.example.json"
+Copy-ReleaseFile "config.mondstadt.example.json"
 Copy-ReleaseFile "release/regions.portable.json" "regions.json"
 Copy-ReleaseFile "README.md"
 Copy-ReleaseFile "CHANGELOG.md"

@@ -12,8 +12,8 @@ from pathlib import Path
 from .config import load_config
 
 
-CONFIGS = ("config.json", "config.sumeru.json", "config.sumeru-full.json")
-DATA_DIRS = ("data", "poi", "calibration", "ui", "references", "cache")
+CONFIGS = ("config.json", "config.sumeru.json", "config.sumeru-full.json", "config.mondstadt.json")
+DATA_DIRS = ("data", "poi", "calibration", "ui", "references", "cache", "routes", "plans")
 
 
 def atomic_json(path: Path, payload: dict) -> None:

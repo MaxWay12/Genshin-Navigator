@@ -21,7 +21,7 @@ LABEL_TREE_URL = f"{API_ROOT}/v1/map/label/tree"
 POINT_LIST_URL = f"{API_ROOT}/v3/map/point/list"
 
 DEFAULT_LABEL_KINDS = {
-    2: "waypoint",
+    2: "statue",
     3: "waypoint",
     17: "chest",
     44: "chest",
@@ -29,7 +29,18 @@ DEFAULT_LABEL_KINDS = {
     46: "chest",
     269: "chest",
     508: "hydroculus",
+    5: "anemoculus",
+    403: "dendroculus",
+    141: "crimson_agate",
+    64: "time_trial",
 }
+# Verified against public label/tree on 2026-09-09. Regional filtering remains
+# independent of these category mappings and of the user's display filters.
+DEFAULT_LABEL_KINDS.update({label: "local_specialty" for label in (
+    29,31,33,35,37,39,41,43,
+    400,401,402,413,430,431,462,468,469,
+    500,501,502,503,545,546,548,549,
+)})
 
 
 def _fetch(endpoint: str, *, map_id: int, lang: str, map_version: str | None) -> dict[str, Any]:
